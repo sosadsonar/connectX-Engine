@@ -32,9 +32,9 @@ def render_board(board: ConnectXBoard):
 
 def main():
     # --- CẤU HÌNH PHÒNG ĐẤU (Hãy sửa đúng theo file bạn vừa train) ---
-    w, h, x = 7, 6, 4       # Kích thước bàn cờ muốn test (Ví dụ: 7x6, X=4 hoặc 10x12, X=5)
+    w, h, x = 10, 10, 5      # Kích thước bàn cờ muốn test (Ví dụ: 7x6, X=4 hoặc 10x12, X=5)
     max_depth = 12          # Độ sâu giới hạn cho Bot (IDS sẽ tự động điều tốc)
-    time_limit = 1.5        # Giới hạn thời gian Bot nghĩ (1.5 giây để bạn đỡ phải đợi lâu)
+    time_limit = 1.8        # Giới hạn thời gian Bot nghĩ (1.5 giây để bạn đỡ phải đợi lâu)
 
     # 1. Tự động tìm kiếm bộ não đã tối ưu vĩnh viễn
     weight_path = f"models/checkpoint_7x6_x4_gen_10.json"
