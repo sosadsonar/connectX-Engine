@@ -19,8 +19,7 @@ class ConnectXBoard:
                 
         # 4 hướng dịch bit cơ bản
         self.shifts = [1, self.col_height, self.col_height + 1, self.col_height - 1]
-        
-        self.center_order = sorted(range(self.w), key=lambda c: abs(c - self.w / 2))
+
         max_cells = self.w * self.col_height
         rng = random.Random(42)  # Seed cố định để bảo toàn tính nhất quán khi tra bảng băm
         
@@ -50,8 +49,8 @@ class ConnectXBoard:
         self.zobrist_key ^= self.zobrist_turn
 
     def get_valid_cols(self):
-        """Trả về danh sách các cột hợp lệ theo thứ tự tối ưu từ giữa ra rìa"""
-        return [c for c in self.center_order if (self.heights[c] % self.col_height) < self.h]
+        """Trả về danh sách các cột hợp lệ"""
+        return [c for c in range(self.w) if (self.heights[c] % self.col_height) < self.h]
 
     def check_win(self, player_id):
         """Kiểm tra chiến thắng bằng Gập nhị phân - Tự động thích ứng với mọi X"""
