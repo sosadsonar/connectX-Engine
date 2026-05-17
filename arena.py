@@ -46,8 +46,8 @@ def play_single_match(w, h, x, weights_p0, weights_p1, depth0, depth1, name0, na
     board = ConnectXBoard(w, h, x)
     
     # Khởi tạo 2 AI tương ứng với 2 bộ não khác nhau
-    ai0 = AdvancedNegamaxAI(weights_p0, player_id=0, tt_exponent=21)
-    ai1 = AdvancedNegamaxAI(weights_p1, player_id=1, tt_exponent=21)
+    ai0 = AdvancedNegamaxAI(weights_p0, player_id=0, tt_exponent=23)
+    ai1 = AdvancedNegamaxAI(weights_p1, player_id=1, tt_exponent=23)
     
     ais = {0: ai0, 1: ai1}
     depths = {0: depth0, 1: depth1}

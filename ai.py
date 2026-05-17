@@ -10,7 +10,7 @@ LOWERBOUND = 1
 UPPERBOUND = 2
 
 class AdvancedNegamaxAI:
-    def __init__(self, config_weights, player_id: int, tt_exponent=21):
+    def __init__(self, config_weights, player_id: int, tt_exponent=23):
         """Khởi tạo AI với bộ não PVS + IDS + Aspiration Windows + Quiescence Search chuẩn hóa Ply"""
         self.weights = config_weights
         self.player_id = player_id

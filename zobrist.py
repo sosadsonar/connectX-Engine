@@ -1,5 +1,5 @@
 class TranspositionTable:
-    def __init__(self, exponent=21):
+    def __init__(self, exponent=23):
         """
         Khởi tạo Bảng chuyển vị (Transposition Table) tĩnh trong bộ nhớ.
         - exponent: Số mũ cơ số 2 để quyết định kích thước bảng (mặc định 21 -> 2^21 entries).

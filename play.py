@@ -62,7 +62,7 @@ def main():
     bot_id = 1 - human_id
     
     # Khởi tạo Bot với ID phe đối lập
-    bot = AdvancedNegamaxAI(weights, player_id=bot_id, tt_exponent=21)
+    bot = AdvancedNegamaxAI(weights, player_id=bot_id, tt_exponent=23)
     
     current_player = 0
     render_board(board)

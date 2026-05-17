@@ -10,16 +10,19 @@ from ai import AdvancedNegamaxAI
 
 BASE_CHAMPION_WEIGHTS = {
     "WIN_BASE": 10000000,
-    "FORK_SCORE": 696285,
-    "THREAT_SCORE": 23562,
-    "MAX_STRATEGIC": 13399,
-    "C_SMOOTH": 1761.419889601332,
-    "K_EDGE": 23.78560574060163,
-    "K_CORNER": 9.751297449273448,
-    "CNN_POWER": 2.513904856699739,
-    "ALPHA_BALANCED": 1.005723998128732,
-    "ALPHA_DEFENSIVE": 1.8969864687039997,
-    "ASPIRATION_DELTA": 2759.0853022807087
+    "FORK_SCORE": 670015,
+    "THREAT_SCORE": 26162,
+    "MAX_STRATEGIC": 13589,
+    "C_SMOOTH": 1563.9577517039959,
+    "K_EDGE": 21.94907344971393,
+    "K_CORNER": 9.824837974267489,
+    "CNN_POWER": 2.2362842314664952,
+    "ALPHA_BALANCED": 0.7147987024389102,
+    "ALPHA_DEFENSIVE": 1.5516637596091083,
+    "ASPIRATION_DELTA": 2614.7390186268426,
+    "meta_target_board": "14x12",
+    "meta_target_x": 4,
+    "meta_trained_depth": 5
 }
 
 def mutate_weights(base_weights, annealing_factor):
@@ -105,8 +108,8 @@ def verify_against_human_lessons(weights, w, h, x):
 
 def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth) -> int:
     board = ConnectXBoard(w, h, x)
-    ai0 = AdvancedNegamaxAI(weights_p0, player_id=0, tt_exponent=21)
-    ai1 = AdvancedNegamaxAI(weights_p1, player_id=1, tt_exponent=21)
+    ai0 = AdvancedNegamaxAI(weights_p0, player_id=0, tt_exponent=23)
+    ai1 = AdvancedNegamaxAI(weights_p1, player_id=1, tt_exponent=23)
     
     current_player = 0
     ais = {0: ai0, 1: ai1}
