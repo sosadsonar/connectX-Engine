@@ -8,19 +8,18 @@ import argparse
 from board import ConnectXBoard
 from ai import AdvancedNegamaxAI
 
-# Sửa lại bộ trọng số gốc trong train.py để Bot nhạy cảm hơn với thế trận của bạn
 BASE_CHAMPION_WEIGHTS = {
     "WIN_BASE": 10000000,
-    "FORK_SCORE": 600000,      # Tăng điểm thưởng khi nhìn ra thế đe dọa kép
-    "THREAT_SCORE": 25000,    
-    "MAX_STRATEGIC": 15000,   
-    "C_SMOOTH": 2000.0,       
-    "K_EDGE": 30.0,            # Tăng điểm ô cạnh để ưu tiên bám đuổi hàng ngang
-    "K_CORNER": 10.0,         
-    "CNN_POWER": 2.2,          # Tăng lũy thừa để Bot thích tụ quân bầy đàn
-    "ALPHA_BALANCED": 1.0,    
-    "ALPHA_DEFENSIVE": 1.8,    # Tăng mạnh hệ số sợ hãi khi bị người chơi ép sân
-    "ASPIRATION_DELTA": 3000.0  
+    "FORK_SCORE": 696285,
+    "THREAT_SCORE": 23562,
+    "MAX_STRATEGIC": 13399,
+    "C_SMOOTH": 1761.419889601332,
+    "K_EDGE": 23.78560574060163,
+    "K_CORNER": 9.751297449273448,
+    "CNN_POWER": 2.513904856699739,
+    "ALPHA_BALANCED": 1.005723998128732,
+    "ALPHA_DEFENSIVE": 1.8969864687039997,
+    "ASPIRATION_DELTA": 2759.0853022807087
 }
 
 def mutate_weights(base_weights, annealing_factor):
@@ -30,6 +29,79 @@ def mutate_weights(base_weights, annealing_factor):
         factor = random.uniform(1 - annealing_factor, 1 + annealing_factor)
         mutated[key] = type(mutated[key])(mutated[key] * factor)
     return mutated
+
+def verify_against_human_lessons(weights, w, h, x):
+    """
+    BỘ LỌC PHÁT HIỆN SAI LẦM (BLUNDER FILTER):
+    Chỉ loại bỏ bộ gen nếu thế cờ vẫn còn đường cứu chịu nhưng Bot lại chọn nước đi thua.
+    Nếu thế cờ là sát cục ép buộc (Forced Loss), cho phép đi tiếp.
+    """
+    file_path = "models/human_lessons.json"
+    if not os.path.exists(file_path):
+        return True
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lessons = json.load(f)
+    except:
+        return True
+
+    tester = AdvancedNegamaxAI(weights, player_id=0, tt_exponent=15)
+
+    for lesson in lessons:
+        if lesson["w"] != w or lesson["h"] != h or lesson["x"] != x:
+            continue
+            
+        test_board = ConnectXBoard(w, h, x)
+        moves = lesson["moves"]
+        human_id = lesson["human_id"]
+        bot_id = 1 - human_id
+        
+        for turn_idx, m in enumerate(moves):
+            if not test_board.get_valid_cols():
+                break
+            curr_player = 0 if turn_idx % 2 == 0 else 1
+            
+            # Quét các nước đi ở giai đoạn tàn cuộc quyết định của trận đấu cũ
+            if curr_player == bot_id and turn_idx >= len(moves) - 6:
+                tester.player_id = bot_id
+                chosen_move = tester.select_move(test_board, max_depth=4, time_limit=0.2, verbose=False)
+                
+                if chosen_move != -1 and chosen_move in test_board.get_valid_cols():
+                    
+                    # THUẬT TOÁN KIỂM TRA: Thế cờ hiện tại còn cứu được không?
+                    any_move_saves = False
+                    for c_bot in test_board.get_valid_cols():
+                        test_board.make_move(c_bot, bot_id)
+                        human_can_win_immediately = False
+                        for c_hum in test_board.get_valid_cols():
+                            test_board.make_move(c_hum, human_id)
+                            if test_board.check_win(human_id):
+                                human_can_win_immediately = True
+                            test_board.undo_move(c_hum, human_id)
+                        test_board.undo_move(c_bot, bot_id)
+                        
+                        if not human_can_win_immediately:
+                            any_move_saves = True
+                            break # Tìm thấy ít nhất một nước đi giúp Bot thủ được qua lượt này
+                    
+                    # Nếu thế cờ còn cứu được (any_move_saves == True), 
+                    # nhưng nước đi thực tế của Bộ gene đột biến này lại để lộ họng súng -> ĐÁNH TRƯỢT
+                    if any_move_saves:
+                        test_board.make_move(chosen_move, bot_id)
+                        blunder = False
+                        for next_col in test_board.get_valid_cols():
+                            test_board.make_move(next_col, human_id)
+                            if test_board.check_win(human_id):
+                                blunder = True
+                            test_board.undo_move(next_col, human_id)
+                        test_board.undo_move(chosen_move, bot_id)
+                        
+                        if blunder:
+                            return False # Loại bỏ bộ gen lỗi chiến thuật thô thiển
+                            
+            test_board.make_move(m, curr_player)
+    return True
 
 def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth) -> int:
     board = ConnectXBoard(w, h, x)
@@ -41,7 +113,6 @@ def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth) -> int:
     last_move = None
     
     while board.get_valid_cols():
-        # KHÓA CHÍ MẠNG: verbose=False giúp tắt toàn bộ log rác trong lúc train
         move = ais[current_player].select_move(board, max_depth=max_depth, time_limit=1.8, last_move=last_move, verbose=False)
         if move == -1:
             break
@@ -52,7 +123,6 @@ def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth) -> int:
             return current_player
             
         current_player = 1 - current_player
-        
     return -1
 
 def save_optimized_weights(champion_weights, w, h, x, search_depth, model_dir="models", custom_filename=None):
@@ -102,7 +172,7 @@ def start_hardcore_training(generations, w, h, x, search_depth, cp_interval, mod
     print(f"====================================================")
     print(f" KHỞI CHẠY TIẾN HÓA SẠCH (PVS + IDS + ASPIRATION)")
     print(f" Địa hình: {w}x{h} | Connect {x} | Giới hạn Depth: {search_depth}")
-    print(f" CHẾ ĐỘ TERMINAL: IM LẶNG TUYỆT ĐỐI (SILENT ENGINE)")
+    print(f" BỘ LỌC KIỂM TRA: ĐANG BẬT BÀI THI TỪ CON NGƯỜI 🧠")
     print(f"====================================================\n")
     
     start_time = time.time()
@@ -111,6 +181,10 @@ def start_hardcore_training(generations, w, h, x, search_depth, cp_interval, mod
         annealing_factor = max(0.01, 0.08 * (1 - (gen / generations)))
         challenger = mutate_weights(champion, annealing_factor)
         
+        # Gọi bộ lọc thông minh đã được nâng cấp sửa lỗi
+        if not verify_against_human_lessons(challenger, w, h, x):
+            continue
+
         champ_score = 0
         chal_score = 0
         
