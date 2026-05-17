@@ -11,7 +11,7 @@ UPPERBOUND = 2
 
 class AdvancedNegamaxAI:
     def __init__(self, config_weights, player_id: int, tt_exponent=21):
-        """Khởi tạo AI với bộ não PVS + IDS + Aspiration Windows + Quiescence Search"""
+        """Khởi tạo AI với bộ não PVS + IDS + Aspiration Windows + Quiescence Search chuẩn hóa Ply"""
         self.weights = config_weights
         self.player_id = player_id
         self.evaluator = BitboardCNNEvaluator(config_weights)
@@ -23,8 +23,8 @@ class AdvancedNegamaxAI:
         self.is_timeout = False
         self.node_count = 0
 
-    def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int) -> int:
-        """Quiescence Search chống hiệu ứng chân trời bằng cách đào sâu dứt điểm chuỗi nước ép buộc"""
+    def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
+        """Quiescence Search chống hiệu ứng chân trời kết hợp tính toán khoảng cách sát cục chuẩn xác"""
         self.node_count += 1
         if self.node_count & 1023 == 0:
             if time.time() - self.start_time > self.time_limit:
@@ -42,13 +42,13 @@ class AdvancedNegamaxAI:
         valid_cols = board.get_valid_cols()
         opp_id = 1 - current_player_id
 
-        # 1. TẠO ĐÒN PHẢN CÔNG: Nếu mình có nước thắng ngay, chớp thời cơ lập tức
+        # 1. TẠO ĐÒN PHẢN CÔNG: Nếu mình có nước thắng ngay, chớp thời cơ lập tức (tính theo ply)
         for col in valid_cols:
             board.make_move(col, current_player_id)
             is_win = board.check_win(current_player_id)
             board.undo_move(col, current_player_id)
             if is_win:
-                return self.weights["WIN_BASE"]
+                return self.weights["WIN_BASE"] - ply
 
         # 2. ĐÁNH CHẶN BUỘC THẾ: Tìm các cột đối thủ có thể sát cục vào lượt sau
         forced_cols = []
@@ -61,12 +61,12 @@ class AdvancedNegamaxAI:
 
         # Nếu đối thủ có từ 2 nước sát cục độc lập trở lên -> Dính bẫy Fork hiểm hóc -> Thua chắc chắn
         if len(forced_cols) > 1:
-            return -self.weights["WIN_BASE"]
+            return -self.weights["WIN_BASE"] + ply
 
         # Duyệt qua các nước đi ép buộc chặn đứng hiểm họa (Noisy Moves của Connect 4)
         for col in forced_cols:
             board.make_move(col, current_player_id)
-            score = -self.quiesce(board, -beta, -alpha, opp_id)
+            score = -self.quiesce(board, -beta, -alpha, opp_id, ply + 1)
             board.undo_move(col, current_player_id)
 
             if self.is_timeout:
@@ -78,7 +78,7 @@ class AdvancedNegamaxAI:
 
         return alpha
 
-    def negamax(self, board: ConnectXBoard, depth: int, alpha: int, beta: int, current_player_id: int) -> int:
+    def negamax(self, board: ConnectXBoard, depth: int, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
         alpha_orig = alpha
         
         self.node_count += 1
@@ -89,10 +89,17 @@ class AdvancedNegamaxAI:
         if self.is_timeout:
             return 0  
 
-        # 1. Tra cứu Transposition Table
+        # 1. Tra cứu Transposition Table & Giải nén điểm sát cục động theo số ply hiện tại
         tt_entry = self.tt.lookup(board.zobrist_key)
         if tt_entry and tt_entry[1] >= depth:
             flag, score = tt_entry[2], tt_entry[3]
+            
+            # Giải nén điểm Mate thích ứng với độ sâu hiện tại của nhánh cờ
+            if score > 9000000:
+                score -= ply
+            elif score < -9000000:
+                score += ply
+                
             if flag == EXACT:
                 return score
             elif flag == LOWERBOUND:
@@ -102,18 +109,18 @@ class AdvancedNegamaxAI:
             if alpha >= beta:
                 return score
 
-        # 2. Xử lý trạng thái kết thúc (Terminal Node)
+        # 2. Xử lý trạng thái kết thúc (Terminal Node) sử dụng giá trị ply từ gốc tìm kiếm
         opp_id = 1 - current_player_id
         if board.check_win(opp_id):
-            return -self.weights["WIN_BASE"] + depth
+            return -self.weights["WIN_BASE"] + ply
         if board.check_win(current_player_id):
-            return self.weights["WIN_BASE"] - depth
+            return self.weights["WIN_BASE"] - ply
 
         valid_cols = board.get_valid_cols()
         
-        # ĐÃ SỬA CHÍ MẠNG: Khi depth chạm đáy (0), không gọi evaluate trực tiếp nữa mà ủy quyền cho quiesce
+        # Khi depth chạm đáy (0), ủy quyền cho quiesce xử lý kèm theo biến đếm ply
         if depth == 0 or not valid_cols:
-            return self.quiesce(board, alpha, beta, current_player_id)
+            return self.quiesce(board, alpha, beta, current_player_id, ply)
 
         # 3. Move Ordering tối ưu tốc độ cắt tỉa
         best_move_suggestion = tt_entry[4] if tt_entry else None
@@ -127,15 +134,15 @@ class AdvancedNegamaxAI:
         max_eval = float('-inf')
         best_move = valid_cols[0] if valid_cols else None
 
-        # 4. Lõi tìm kiếm biến thể chính (PVS)
+        # 4. Lõi tìm kiếm biến thể chính (PVS) tăng tiến ply + 1
         for i, col in enumerate(valid_cols):
             board.make_move(col, current_player_id)
             if i == 0:
-                score = -self.negamax(board, depth - 1, -beta, -alpha, 1 - current_player_id)
+                score = -self.negamax(board, depth - 1, -beta, -alpha, 1 - current_player_id, ply + 1)
             else:
-                score = -self.negamax(board, depth - 1, -alpha - 1, -alpha, 1 - current_player_id)
+                score = -self.negamax(board, depth - 1, -alpha - 1, -alpha, 1 - current_player_id, ply + 1)
                 if alpha < score < beta and not self.is_timeout:
-                    score = -self.negamax(board, depth - 1, -beta, -score, 1 - current_player_id)
+                    score = -self.negamax(board, depth - 1, -beta, -score, 1 - current_player_id, ply + 1)
             board.undo_move(col, current_player_id)
 
             if self.is_timeout:
@@ -149,7 +156,7 @@ class AdvancedNegamaxAI:
             if alpha >= beta:
                 break  
 
-        # 5. Lưu trữ kết quả đồng bộ với bảng băm
+        # 5. Lưu trữ kết quả - Nén điểm sát cục độc lập vị trí trước khi đưa vào bảng băm
         if not self.is_timeout:
             if max_eval <= alpha_orig:
                 flag = UPPERBOUND
@@ -157,7 +164,14 @@ class AdvancedNegamaxAI:
                 flag = LOWERBOUND
             else:
                 flag = EXACT
-            self.tt.store(board.zobrist_key, depth, flag, max_eval, best_move)
+                
+            tt_score = max_eval
+            if max_eval > 9000000:
+                tt_score += ply
+            elif max_eval < -9000000:
+                tt_score -= ply
+                
+            self.tt.store(board.zobrist_key, depth, flag, tt_score, best_move)
             
         return max_eval
 
@@ -240,12 +254,13 @@ class AdvancedNegamaxAI:
 
                 for i, col in enumerate(valid_cols):
                     board.make_move(col, self.player_id)
+                    # Lượt gọi gốc từ select_move được tính là ply=1
                     if i == 0:
-                        score = -self.negamax(board, current_depth - 1, -current_beta, -current_alpha, 1 - self.player_id)
+                        score = -self.negamax(board, current_depth - 1, -current_beta, -current_alpha, 1 - self.player_id, ply=1)
                     else:
-                        score = -self.negamax(board, current_depth - 1, -current_alpha - 1, -current_alpha, 1 - self.player_id)
+                        score = -self.negamax(board, current_depth - 1, -current_alpha - 1, -current_alpha, 1 - self.player_id, ply=1)
                         if current_alpha < score < current_beta and not self.is_timeout:
-                            score = -self.negamax(board, current_depth - 1, -current_beta, -score, 1 - self.player_id)
+                            score = -self.negamax(board, current_depth - 1, -current_beta, -score, 1 - self.player_id, ply=1)
                     board.undo_move(col, self.player_id)
                     
                     if self.is_timeout:

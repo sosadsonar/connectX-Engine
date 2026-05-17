@@ -10,7 +10,7 @@
     "ALPHA_BALANCED": 1.005723998128732,
     "ALPHA_DEFENSIVE": 1.8969864687039997,
     "ASPIRATION_DELTA": 2759.0853022807087,
-    "meta_target_board": "7x6",
+    "meta_target_board": "10x10",
     "meta_target_x": 4,
-    "meta_trained_depth": 8
+    "meta_trained_depth": 5
 }
