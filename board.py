@@ -1,3 +1,5 @@
+import random
+
 class ConnectXBoard:
     def __init__(self, w=7, h=6, x=4):
         self.w = w          # Chiều rộng
@@ -18,20 +20,36 @@ class ConnectXBoard:
         # 4 hướng dịch bit cơ bản
         self.shifts = [1, self.col_height, self.col_height + 1, self.col_height - 1]
 
+        max_cells = self.w * self.col_height
+        rng = random.Random(42)  # Seed cố định để bảo toàn tính nhất quán khi tra bảng băm
+        
+        # Sinh mảng phẳng 2 chiều chứa các số ngẫu nhiên 64-bit cho từng vị trí ô cờ
+        self.zobrist_table = [
+            [rng.getrandbits(64) for _ in range(max_cells)],
+            [rng.getrandbits(64) for _ in range(max_cells)]
+        ]
+        self.zobrist_turn = rng.getrandbits(64)
+        self.zobrist_key = 0  # Bàn cờ rỗng khởi tạo bằng mã 0
+
     def make_move(self, col, player_id):
-        """Đặt quân cờ vào cột col"""
+        """Đặt quân cờ vào cột col và cập nhật gối đầu mã băm Zobrist Key"""
         idx = self.heights[col]
         self.boards[player_id] |= (1 << idx)
+        self.zobrist_key ^= self.zobrist_table[player_id][idx]
+        self.zobrist_key ^= self.zobrist_turn
+        
         self.heights[col] += 1
 
     def undo_move(self, col, player_id):
-        """Rút quân cờ (Phục vụ đệ quy Minimax không cần sao chép mảng)"""
+        """Rút quân cờ và hoàn tác Zobrist Key về trạng thái trước đó trong O(1)"""
         self.heights[col] -= 1
         idx = self.heights[col]
         self.boards[player_id] &= ~(1 << idx)
+        self.zobrist_key ^= self.zobrist_table[player_id][idx]
+        self.zobrist_key ^= self.zobrist_turn
 
     def get_valid_cols(self):
-        """Trả về danh sách các cột hợp lệ có thể đi"""
+        """Trả về danh sách các cột hợp lệ"""
         return [c for c in range(self.w) if (self.heights[c] % self.col_height) < self.h]
 
     def check_win(self, player_id):
