@@ -18,6 +18,21 @@ def load_champion_weights(file_path):
     print(f"[⚠️ WARNING] Không tìm thấy '{file_path}'. Fallback về cấu hình BASE.")
     return BASE_CHAMPION_WEIGHTS
 
+def mirror_bitmask(mask: int) -> int:
+    """
+    VŨ KHÍ TỐI ƯU 1: Lật gương toàn bộ bàn cờ Trái <-> Phải bằng toán tử Bitwise.
+    Khớp chính xác với cấu trúc Bitboard (c * 7 + r) 7x6 của Tromp, giúp nhân đôi dữ liệu siêu tốc.
+    """
+    m = 0
+    m |= (mask & 0x7F) << 42              # Cột 0 -> Cột 6
+    m |= (mask & 0x3F80) << 28            # Cột 1 -> Cột 5
+    m |= (mask & 0x1FC000) << 14          # Cột 2 -> Cột 4
+    m |= (mask & 0xFF80000)               # Cột 3 (Trung tâm) -> Giữ nguyên
+    m |= (mask & 0x7F8000000) >> 14       # Cột 4 -> Cột 2
+    m |= (mask & 0x3F800000000) >> 28     # Cột 5 -> Cột 1
+    m |= (mask & 0x1FC0000000000) >> 42   # Cột 6 -> Cột 0
+    return m
+
 def save_dataset(file_path, all_us_masks, all_them_masks, all_scores, all_results, args):
     """Hàm đóng gói dữ liệu và ghi xuống ổ cứng (Dùng cho cả checkpoint và kết quả cuối)"""
     bit_required = args.w * (args.h + 1)
@@ -57,7 +72,6 @@ def worker_game(task_info):
     """
     HÀM WORKER CHẠY TRÊN TỪNG NHÂN CPU ĐỘC LẬP (Lock-free):
     Mô phỏng 1 ván đấu đơn, tích hợp bộ lọc Sát cục và bộ lọc Blunder siêu phẳng.
-    Nâng cấp: Đi ngẫu nhiên 6 nước đầu để tăng tính đa dạng cho dữ liệu.
     """
     game_idx, w, h, x, weights_p0, weights_p1, depth, time_limit, blunder_thr = task_info
     
@@ -82,7 +96,7 @@ def worker_game(task_info):
         if ply_count < 6:
             move = random.choice(valid_cols)
             
-        # 🎯 GIAI ĐOẠN 2: Từ nước thứ 7 trở đi, AI nghiêm túc vào cuộc và bắt đầu ghi log data
+        # Từ nước thứ 7 trở đi, AI nghiêm túc vào cuộc và bắt đầu ghi log data sạch
         else:
             active_ai = ais[current_player]
             move = active_ai.select_move(board, max_depth=depth, time_limit=time_limit, last_move=last_move, verbose=False)
