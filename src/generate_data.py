@@ -37,6 +37,22 @@ def save_dataset(file_path, all_us_masks, all_them_masks, all_scores, all_result
     }
     np.save(file_path, dataset_matrix)
 
+def mirror_bitmask(mask: int) -> int:
+    """
+    ⚡ PHẢN ỨNG LẬP GƯƠNG TỐC ĐỘ TOÁN TỬ BIT (ZERO OVERHEAD)
+    Lật ngược toàn bộ bàn cờ Trái <-> Phải bằng cách tráo vị trí các cột bitmask.
+    Áp dụng chính xác cho cấu hình Bitboard 7x6 chuẩn John Tromp (7 bit/cột).
+    """
+    m = 0
+    m |= (mask & 0x7F) << 42              # Cột 0 dịch sang vị trí Cột 6
+    m |= (mask & 0x3F80) << 28            # Cột 1 dịch sang vị trí Cột 5
+    m |= (mask & 0x1FC000) << 14          # Cột 2 dịch sang vị trí Cột 4
+    m |= (mask & 0xFF80000)               # Cột 3 (Cột trung tâm) giữ nguyên vị trí
+    m |= (mask & 0x7F8000000) >> 14       # Cột 4 dịch ngược về Cột 2
+    m |= (mask & 0x3F800000000) >> 28     # Cột 5 dịch ngược về Cột 1
+    m |= (mask & 0x1FC0000000000) >> 42   # Cột 6 dịch ngược về Cột 0
+    return m
+
 def worker_game(task_info):
     """
     HÀM WORKER CHẠY TRÊN TỪNG NHÂN CPU ĐỘC LẬP (Lock-free):
@@ -54,10 +70,7 @@ def worker_game(task_info):
     last_move = None
     game_history = []
     
-    # Biến theo dõi điểm số của nước đi ngay trước đó để tính độ lệch (Swing)
     previous_score = None 
-    
-    # Bộ đếm số nước đi (ply) thực tế đã hạ xuống bàn cờ
     ply_count = 0 
 
     while board.get_valid_cols():
@@ -65,7 +78,7 @@ def worker_game(task_info):
         if not valid_cols:
             break
             
-        # 🎯 GIAI ĐOẠN 1: 6 nước đầu đi ngẫu nhiên hoàn toàn để tạo thế cờ dị
+        # 🎲 GIAI ĐOẠN 1: 6 nước đầu đi ngẫu nhiên hoàn toàn để tạo thế cờ dị
         if ply_count < 6:
             move = random.choice(valid_cols)
             
@@ -76,16 +89,14 @@ def worker_game(task_info):
             if move == -1:
                 break
                 
-            # Lấy điểm số từ thuộc tính được cập nhật sau khi AI nghĩ xong
             raw_score = getattr(active_ai, 'last_score', 0)
             
-            # 1. BỘ LỌC SÁT CỤC: Loại bỏ tuyệt đối trạng thái cờ tàn hiển nhiên (> 9,000,000)
+            # 1. BỘ LỌC SÁT CỤC: Loại bỏ trạng thái cờ tàn hiển nhiên (> 9,000,000)
             if abs(raw_score) <= 9000000:
                 is_blunder_sequence = False
                 
-                # 2. BỘ LỌC BLUNDER (EVALUATION SWING): Kiểm tra độ lệch pha chiến thuật
+                # 2. BỘ LỌC BLUNDER (EVALUATION SWING)
                 if previous_score is not None:
-                    # Theo nguyên lý zero-sum của Negamax, điểm kỳ vọng lượt này phải bằng -(điểm lượt trước)
                     eval_swing = abs(raw_score - (-previous_score))
                     if eval_swing > blunder_thr:
                         is_blunder_sequence = True
@@ -98,14 +109,11 @@ def worker_game(task_info):
                         "player_at_turn": current_player
                     })
                 else:
-                    # Nếu phát hiện pha bẻ gãy điểm số đột ngột, tiến hành "hồi tố" gạt bỏ nước lỗi
                     if game_history:
                         game_history.pop()
                 
-            # Cập nhật điểm mốc tham chiếu cho lượt kế tiếp
             previous_score = raw_score
             
-        # Thực thi nước đi và cập nhật trạng thái hệ thống
         board.make_move(move, current_player)
         last_move = move
         ply_count += 1
@@ -118,7 +126,7 @@ def worker_game(task_info):
     return game_history, -1
 
 def start_data_generation():
-    parser = argparse.ArgumentParser(description="ConnectX Production Multi-Core Data Generator for NNUE")
+    parser = argparse.ArgumentParser(description="ConnectX Production Multi-Core Data Generator with Symmetry Augmentation")
     parser.add_argument("--w", type=int, default=7, help="Chiều rộng sa bàn")
     parser.add_argument("--h", type=int, default=6, help="Chiều cao sa bàn")
     parser.add_argument("--x", type=int, default=4, help="Luật Connect X")
@@ -126,7 +134,7 @@ def start_data_generation():
     parser.add_argument("--m2", type=str, default="../models/best_weights_14x12_x4.json", help="Đường dẫn não vương quyền 14x12")
     parser.add_argument("--depth", type=int, default=12, help="Độ sâu duyệt cây khi sinh data")
     parser.add_argument("--time", type=float, default=1.8, help="Giới hạn thời gian nghĩ mỗi nước")
-    parser.add_argument("--games", type=int, default=3000, help="Số ván đấu tự đối kháng muốn chạy")
+    parser.add_argument("--games", type=int, default=25000, help="Số ván đấu thô muốn chạy (Hệ thống tự x2 dữ liệu)")
     parser.add_argument("--cores", type=int, default=cpu_count(), help="Số nhân CPU muốn huy động")
     parser.add_argument("--out", type=str, default="../data/dataset_hybrid_nnue.npy", help="Tên file nhị phân đầu ra")
     parser.add_argument("--ckpt_interval", type=int, default=500, help="Chu kỳ lưu checkpoint dự phòng (số ván)")
@@ -134,17 +142,15 @@ def start_data_generation():
     args = parser.parse_args()
 
     print("=====================================================")
-    print("    HỆ THỐNG SINH DỮ LIỆU ĐA NHÂN SIÊU TỐC (MULTIPROCESSING)")
-    print(f" Sa bàn: {args.w}x{args.h} | Đang huy động: {args.cores}/{cpu_count()} nhân CPU 🔥")
-    print(f" Chế độ: Kích hoạt 6 nước đầu ngẫu nhiên chống trùng lặp 🎲")
-    print(f" Ngưỡng lọc Blunder chiến thuật: {args.blunder_thr:,} điểm 🎯")
-    print(f" Tự động lưu bảo hiểm sau mỗi: {args.ckpt_interval} ván cờ 🛡️")
+    print("    🔥 HỆ THỐNG SINH DATA ĐA NHÂN KÍCH HOẠT PHẢN ỨNG LẬT GƯƠNG")
+    print(f" Sa bàn: {args.w}x{args.h} | Đang huy động: {args.cores}/{cpu_count()} nhân CPU")
+    print(f" Chế độ: Đột phá 6 nước đầu ngẫu nhiên + Tăng cường đối xứng gương 🧬")
+    print(f" ⚠️  CHÚ Ý: Chạy {args.games:,} ván thô sẽ thu về tương đương {args.games * 2:,} ván data!")
     print("=====================================================\n")
 
     weights_7x6 = load_champion_weights(args.m1)
     weights_14x12 = load_champion_weights(args.m2)
     
-    print("[HỆ THỐNG] Đang thiết lập ma trận xoay tua tam phân chiến thuật...")
     tasks = []
     for idx in range(1, args.games + 1):
         if idx % 3 == 0:
@@ -163,7 +169,6 @@ def start_data_generation():
     game_count = 0
     start_time = time.time()
 
-    print(f"[HỆ THỐNG] Khai hỏa! Đang xé nhỏ ván đấu giải phóng công suất phần cứng...\n")
     checkpoint_path = f"{args.out}.ckpt"
 
     with Pool(processes=args.cores) as pool:
@@ -179,26 +184,30 @@ def start_data_generation():
                 else:
                     result_label = 0.0
                     
+                # 🟢 BẢN GỐC TỪ THUẬT TOÁN TÌM KIẾM
                 all_us_masks.append(state["us_mask"])
                 all_them_masks.append(state["them_mask"])
                 all_scores.append(state["search_score"])
                 all_results.append(result_label)
                 
-            total_positions_saved += len(history)
+                # 🧬 PHẢN ỨNG LẬT GƯƠNG: Nhân bản đối xứng hình học cấp tốc
+                all_us_masks.append(mirror_bitmask(state["us_mask"]))
+                all_them_masks.append(mirror_bitmask(state["them_mask"]))
+                all_scores.append(state["search_score"]) # Điểm số lượng giá giữ nguyên tính chất đối xứng
+                all_results.append(result_label)         # Kết quả ván đấu không đổi
+                
+            # Cập nhật bộ đếm x2 số lượng vị trí thực tế lưu vào RAM
+            total_positions_saved += (len(history) * 2)
             
             if game_count % 20 == 0 or game_count == 1 or game_count == args.games:
                 elapsed = time.time() - start_time
-                print(f" -> [Tiến độ: {game_count:05d}/{args.games:05d} ván] Tích lũy: {total_positions_saved:,} thế cờ sạch. Tốc độ thực: {game_count / elapsed:.2f} ván/giây.")
+                print(f" -> [Tiến độ: {game_count:05d}/{args.games:05d} ván] Tích lũy: {total_positions_saved:,} thế cờ. Tốc độ thực: {game_count / elapsed:.2f} ván thô/giây.")
 
             if game_count % args.ckpt_interval == 0 and game_count < args.games:
                 checkpoint_start = time.time()
                 save_dataset(checkpoint_path, all_us_masks, all_them_masks, all_scores, all_results, args)
                 ckpt_elapsed = time.time() - checkpoint_start
-                print(f"    💾 [CHECKPOINT] Đã ghi đè bảo hiểm tại ván {game_count}! Tích lũy {total_positions_saved:,} thế cờ sạch vào '{checkpoint_path}' (Mất {ckpt_elapsed:.2f}s).")
-
-    bit_required = args.w * (args.h + 1)
-    if bit_required > 64:
-        print(f"\n[HỆ THỐNG] Phát hiện hình cờ khổng lồ (>64-bit). Ép dải số nguyên lớn Python Object.")
+                print(f"    🛡️ [CHECKPOINT BẢO HIỂM X2] Đã lưu {total_positions_saved:,} thế cờ vào '{checkpoint_path}' (Mất {ckpt_elapsed:.2f}s).")
 
     save_dataset(args.out, all_us_masks, all_them_masks, all_scores, all_results, args)
     
@@ -209,10 +218,10 @@ def start_data_generation():
     print(f"\n=====================================================")
     print("               CHIẾN DỊCH HOÀN TẤT MỸ MÃN")
     print("=====================================================")
-    print(f"🏆 Tổng số Data Point tích lũy: {total_positions_saved:,} thế cờ trung cuộc SIÊU SẠCH.")
-    print(f"💾 Tệp tin nhị phân xuất xưởng: '{args.out}'")
-    print(f"⏱️ Tổng thời gian vắt kiệt CPU: {total_time/60:.2f} phút.")
-    print(f"⚡ Hiệu suất trung bình: {total_positions_saved / total_time:.1f} thế cờ/giây.")
+    print(f"🏆 Tổng số Data Point xuất xưởng: {total_positions_saved:,} thế cờ trung cuộc SIÊU PHẲNG.")
+    print(f"💾 Tệp tin nhị phân lưu trữ: '{args.out}'")
+    print(f"⏱️ Tổng thời gian treo máy: {total_time/60:.2f} phút.")
+    print(f"⚡ Hiệu suất thực tế: {total_positions_saved / total_time:.1f} thế cờ/giây.")
     print("=====================================================")
 
 if __name__ == "__main__":
