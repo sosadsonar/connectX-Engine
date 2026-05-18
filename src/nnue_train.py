@@ -97,7 +97,7 @@ def train_nnue():
     print("=====================================================\n")
 
     full_dataset = ConnectXDataset(args.data)
-    train_size = int(0.8 * len(full_dataset))
+    train_size = int(0.9 * len(full_dataset))
     val_size = len(full_dataset) - train_size
     
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])

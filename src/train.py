@@ -11,19 +11,19 @@ from ai import AdvancedNegamaxAI
 # Trọng số vương quyền nền tảng dùng làm bệ phóng tiến hóa
 BASE_CHAMPION_WEIGHTS = {
     "WIN_BASE": 10000000,
-    "FORK_SCORE": 702567,
-    "THREAT_SCORE": 33243,
-    "MAX_STRATEGIC": 12974,
-    "C_SMOOTH": 1631.5493450018446,
-    "K_EDGE": 23.350115943639587,
-    "K_CORNER": 9.30082652782052,
-    "CNN_POWER": 2.123664797642297,
-    "ALPHA_BALANCED": 0.7266035529214415,
-    "ALPHA_DEFENSIVE": 1.4608661791112698,
-    "ASPIRATION_DELTA": 2590.699586643471,
-    "meta_target_board": "7x6",
+    "FORK_SCORE": 670015,
+    "THREAT_SCORE": 26162,
+    "MAX_STRATEGIC": 13589,
+    "C_SMOOTH": 1563.9577517039959,
+    "K_EDGE": 21.94907344971393,
+    "K_CORNER": 9.824837974267489,
+    "CNN_POWER": 2.2362842314664952,
+    "ALPHA_BALANCED": 0.7147987024389102,
+    "ALPHA_DEFENSIVE": 1.5516637596091083,
+    "ASPIRATION_DELTA": 2614.7390186268426,
+    "meta_target_board": "14x12",
     "meta_target_x": 4,
-    "meta_trained_depth": 14
+    "meta_trained_depth": 5
 }
 
 def mutate_weights(base_weights, annealing_factor):

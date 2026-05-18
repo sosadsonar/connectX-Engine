@@ -76,14 +76,14 @@ class BitboardCNNEvaluator:
         if opp_threats >= 2: return -self.fork_score
         if my_threats >= 2: return self.fork_score
 
-        # --- PHASE 2: THƯỞNG ĐIỂM CHIẾM TRỤC TRUNG TÂM (Dùng Mask đã cache) ---
+        # --- PHASE 2: THƯỞNG ĐIỂM CHIẾM TRỤC TRUNG TÂM (Dùng bit_count siêu tốc) ---
         my_board = board.boards[my_id]
         opp_board = board.boards[opp_id]
 
-        my_center_bits = bin(my_board & self.center_mask).count('1')
-        opp_center_bits = bin(opp_board & self.center_mask).count('1')
-        my_flank_bits = bin(my_board & self.flank_mask).count('1')
-        opp_flank_bits = bin(opp_board & self.flank_mask).count('1')
+        my_center_bits = (my_board & self.center_mask).bit_count()
+        opp_center_bits = (opp_board & self.center_mask).bit_count()
+        my_flank_bits = (my_board & self.flank_mask).bit_count()
+        opp_flank_bits = (opp_board & self.flank_mask).bit_count()
 
         center_score = (my_center_bits - opp_center_bits) * 150 + (my_flank_bits - opp_flank_bits) * 50
 
@@ -110,17 +110,16 @@ class BitboardCNNEvaluator:
         opp_edges_mask &= empty_mask
         opp_corners_mask &= empty_mask
 
-        # Phân tách cụm quân bằng mảng hằng số lũy thừa đã tính sẵn
         total_my_cnn_score = (
-            (bin(my_edges_mask & ~my_corners_mask).count('1') * self.my_edge_pow) +
-            (bin(my_corners_mask & ~my_edges_mask).count('1') * self.my_corner_pow) +
-            (bin(my_edges_mask & my_corners_mask).count('1') * self.my_both_pow)
+            ((my_edges_mask & ~my_corners_mask).bit_count() * self.my_edge_pow) +
+            ((my_corners_mask & ~my_edges_mask).bit_count() * self.my_corner_pow) +
+            ((my_edges_mask & my_corners_mask).bit_count() * self.my_both_pow)
         )
         
         total_opp_cnn_score = (
-            (bin(opp_edges_mask & ~opp_corners_mask).count('1') * self.my_edge_pow) +
-            (bin(opp_corners_mask & ~opp_edges_mask).count('1') * self.my_corner_pow) +
-            (bin(opp_edges_mask & opp_corners_mask).count('1') * self.my_both_pow)
+            ((opp_edges_mask & ~opp_corners_mask).bit_count() * self.my_edge_pow) +
+            ((opp_corners_mask & ~opp_edges_mask).bit_count() * self.my_corner_pow) +
+            ((opp_edges_mask & opp_corners_mask).bit_count() * self.my_both_pow)
         )
 
         # --- PHASE 4: SOFT-CAP NÉN PHÂN TẦNG VÀ ĐIỀU TỐC PHÒNG NGỰ ---

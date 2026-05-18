@@ -35,12 +35,11 @@ class AdvancedNegamaxAI:
                 self.is_timeout = True
 
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
-        """Quiescence Search chống hiệu ứng chân trời kết hợp tính toán khoảng cách sát cục chuẩn xác"""
+        """Quiescence Search - Bản sửa lỗi Ply Penalty cho đòn Fork"""
         self.check_signals()
         if self.is_timeout:
             return 0
 
-        # Stand Pat: Lấy điểm lượng giá tĩnh làm mỏ neo nền
         stand_pat = self.evaluator.evaluate(board, current_player_id)
         if stand_pat >= beta:
             return stand_pat
@@ -49,15 +48,14 @@ class AdvancedNegamaxAI:
         valid_cols = board.get_valid_cols()
         opp_id = 1 - current_player_id
 
-        # 1. TẠO ĐÒN PHẢN CÔNG: Nếu mình có nước thắng ngay, chớp thời cơ lập tức
+        # 1. Nếu mình ăn được luôn trong tầm nhìn tĩnh -> Thắng ở lượt kế tiếp (ply + 1)
         for col in valid_cols:
             board.make_move(col, current_player_id)
             is_win = board.check_win(current_player_id)
             board.undo_move(col, current_player_id)
             if is_win:
-                return self.weights["WIN_BASE"] - ply
+                return self.weights["WIN_BASE"] - (ply + 1) # SỬA TẠI ĐÂY
 
-        # 2. ĐÁNH CHẶN BUỘC THẾ: Tìm các cột đối thủ có thể sát cục vào lượt sau
         forced_cols = []
         for col in valid_cols:
             board.make_move(col, opp_id)
@@ -66,11 +64,10 @@ class AdvancedNegamaxAI:
             if is_win:
                 forced_cols.append(col)
 
-        # Nếu đối thủ có từ 2 nước sát cục độc lập trở lên -> Thua chắc chắn
+        # 2. Nếu đối thủ có Fork -> Mình sẽ bị thua sau 2 nước nữa (ply + 2)
         if len(forced_cols) > 1:
-            return -self.weights["WIN_BASE"] + ply
+            return -self.weights["WIN_BASE"] + (ply + 2) # SỬA TẠI ĐÂY
 
-        # Duyệt qua các nước đi ép buộc chặn đứng hiểm họa
         for col in forced_cols:
             board.make_move(col, current_player_id)
             score = -self.quiesce(board, -beta, -alpha, opp_id, ply + 1)
