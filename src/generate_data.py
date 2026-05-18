@@ -2,6 +2,7 @@
 import os
 import time
 import json
+import random
 import argparse
 import numpy as np
 from multiprocessing import Pool, cpu_count
@@ -40,6 +41,7 @@ def worker_game(task_info):
     """
     HÀM WORKER CHẠY TRÊN TỪNG NHÂN CPU ĐỘC LẬP (Lock-free):
     Mô phỏng 1 ván đấu đơn, tích hợp bộ lọc Sát cục và bộ lọc Blunder siêu phẳng.
+    Nâng cấp: Đi ngẫu nhiên 6 nước đầu để tăng tính đa dạng cho dữ liệu.
     """
     game_idx, w, h, x, weights_p0, weights_p1, depth, time_limit, blunder_thr = task_info
     
@@ -54,47 +56,59 @@ def worker_game(task_info):
     
     # Biến theo dõi điểm số của nước đi ngay trước đó để tính độ lệch (Swing)
     previous_score = None 
+    
+    # Bộ đếm số nước đi (ply) thực tế đã hạ xuống bàn cờ
+    ply_count = 0 
 
     while board.get_valid_cols():
-        active_ai = ais[current_player]
-        
-        move = active_ai.select_move(board, max_depth=depth, time_limit=time_limit, last_move=last_move, verbose=False)
-        if move == -1:
+        valid_cols = board.get_valid_cols()
+        if not valid_cols:
             break
             
-        # Lấy điểm số từ thuộc tính được cập nhật sau khi AI nghĩ xong
-        raw_score = getattr(active_ai, 'last_score', 0)
-        
-        # 1. BỘ LỌC SÁT CỤC: Loại bỏ tuyệt đối trạng thái cờ tàn hiển nhiên (> 9,000,000)
-        if abs(raw_score) <= 9000000:
-            is_blunder_sequence = False
+        # 🎯 GIAI ĐOẠN 1: 6 nước đầu đi ngẫu nhiên hoàn toàn để tạo thế cờ dị
+        if ply_count < 6:
+            move = random.choice(valid_cols)
             
-            # 2. BỘ LỌC BLUNDER (EVALUATION SWING): Kiểm tra độ lệch pha chiến thuật
-            if previous_score is not None:
-                # Theo nguyên lý zero-sum của Negamax, điểm kỳ vọng lượt này phải bằng -(điểm lượt trước)
-                # Nếu độ lệch tuyệt đối vượt ngưỡng, chứng tỏ thế trận bị gãy do sai lầm nghiêm trọng hoặc hiệu ứng chân trời
-                eval_swing = abs(raw_score - (-previous_score))
-                if eval_swing > blunder_thr:
-                    is_blunder_sequence = True
+        # 🎯 GIAI ĐOẠN 2: Từ nước thứ 7 trở đi, AI nghiêm túc vào cuộc và bắt đầu ghi log data
+        else:
+            active_ai = ais[current_player]
+            move = active_ai.select_move(board, max_depth=depth, time_limit=time_limit, last_move=last_move, verbose=False)
+            if move == -1:
+                break
+                
+            # Lấy điểm số từ thuộc tính được cập nhật sau khi AI nghĩ xong
+            raw_score = getattr(active_ai, 'last_score', 0)
             
-            if not is_blunder_sequence:
-                game_history.append({
-                    "us_mask": board.boards[current_player],
-                    "them_mask": board.boards[1 - current_player],
-                    "search_score": raw_score,
-                    "player_at_turn": current_player
-                })
-            else:
-                # Nếu phát hiện pha bẻ gãy điểm số đột ngột, ta tiến hành "hồi tố":
-                # Xóa luôn thế cờ lỗi liền trước của đối thủ ra khỏi lịch sử để giữ tập dữ liệu siêu sạch
-                if game_history:
-                    game_history.pop()
+            # 1. BỘ LỌC SÁT CỤC: Loại bỏ tuyệt đối trạng thái cờ tàn hiển nhiên (> 9,000,000)
+            if abs(raw_score) <= 9000000:
+                is_blunder_sequence = False
+                
+                # 2. BỘ LỌC BLUNDER (EVALUATION SWING): Kiểm tra độ lệch pha chiến thuật
+                if previous_score is not None:
+                    # Theo nguyên lý zero-sum của Negamax, điểm kỳ vọng lượt này phải bằng -(điểm lượt trước)
+                    eval_swing = abs(raw_score - (-previous_score))
+                    if eval_swing > blunder_thr:
+                        is_blunder_sequence = True
+                
+                if not is_blunder_sequence:
+                    game_history.append({
+                        "us_mask": board.boards[current_player],
+                        "them_mask": board.boards[1 - current_player],
+                        "search_score": raw_score,
+                        "player_at_turn": current_player
+                    })
+                else:
+                    # Nếu phát hiện pha bẻ gãy điểm số đột ngột, tiến hành "hồi tố" gạt bỏ nước lỗi
+                    if game_history:
+                        game_history.pop()
+                
+            # Cập nhật điểm mốc tham chiếu cho lượt kế tiếp
+            previous_score = raw_score
             
-        # Cập nhật điểm mốc để làm tham chiếu so sánh cho lượt đi kế tiếp
-        previous_score = raw_score
-        
+        # Thực thi nước đi và cập nhật trạng thái hệ thống
         board.make_move(move, current_player)
         last_move = move
+        ply_count += 1
         
         if board.check_win(current_player):
             return game_history, current_player
@@ -116,13 +130,13 @@ def start_data_generation():
     parser.add_argument("--cores", type=int, default=cpu_count(), help="Số nhân CPU muốn huy động")
     parser.add_argument("--out", type=str, default="../data/dataset_hybrid_nnue.npy", help="Tên file nhị phân đầu ra")
     parser.add_argument("--ckpt_interval", type=int, default=500, help="Chu kỳ lưu checkpoint dự phòng (số ván)")
-    # Bổ sung tham số cấu hình ngưỡng Blunder linh hoạt từ CLI
     parser.add_argument("--blunder_thr", type=int, default=350000, help="Ngưỡng biến động điểm số để xác định Blunder")
     args = parser.parse_args()
 
     print("=====================================================")
     print("    HỆ THỐNG SINH DỮ LIỆU ĐA NHÂN SIÊU TỐC (MULTIPROCESSING)")
     print(f" Sa bàn: {args.w}x{args.h} | Đang huy động: {args.cores}/{cpu_count()} nhân CPU 🔥")
+    print(f" Chế độ: Kích hoạt 6 nước đầu ngẫu nhiên chống trùng lặp 🎲")
     print(f" Ngưỡng lọc Blunder chiến thuật: {args.blunder_thr:,} điểm 🎯")
     print(f" Tự động lưu bảo hiểm sau mỗi: {args.ckpt_interval} ván cờ 🛡️")
     print("=====================================================\n")
