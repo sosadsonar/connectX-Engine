@@ -77,8 +77,8 @@ class StockfishLoss(nn.Module):
 def train_nnue():
     parser = argparse.ArgumentParser(description="ConnectX NNUE Custom Stockfish Trainer with Resume Capability")
     # Thay đổi tham số truyền vào: Nhận riêng biệt file Train và file Val tổng hợp sạch
-    parser.add_argument("--train_data", type=str, default="final_nnue_train.npy", help="Đường dẫn file dữ liệu Train sạch")
-    parser.add_argument("--val_data", type=str, default="final_nnue_val.npy", help="Đường dẫn file dữ liệu Validation bảo hiểm")
+    parser.add_argument("--train_data", type=str, default="../data/final_nnue_train.npy", help="Đường dẫn file dữ liệu Train sạch")
+    parser.add_argument("--val_data", type=str, default="../data/final_nnue_val.npy", help="Đường dẫn file dữ liệu Validation bảo hiểm")
     parser.add_argument("--epochs", type=int, default=30, help="Số lượng kỷ nguyên huấn luyện")
     parser.add_argument("--batch_size", type=int, default=1024, help="Kích thước lô dữ liệu (Batch Size)")
     parser.add_argument("--lr", type=float, default=0.001, help="Tốc độ học (Learning Rate)")
