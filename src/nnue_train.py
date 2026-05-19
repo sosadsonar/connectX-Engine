@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
 class ConnectXNNUE(nn.Module):
-    """Kiến trúc mạng NNUE ConnectX chuẩn hóa: 84 -> 128 -> 64 -> 1 (Dùng Clipped ReLU tối ưu NumPy)"""
+    """Kiến trúc mạng NNUE ConnectX chuẩn hóa: 84 -> 64 -> 32 -> 1 (Dùng Clipped ReLU tối ưu NumPy)"""
     def __init__(self, input_size=84, hidden1=128, hidden2=64):
         super(ConnectXNNUE, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden1)

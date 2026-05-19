@@ -7,12 +7,14 @@ import numpy as np
 # ⚙️ CẤU HÌNH ĐƯỜNG DẪN FILE CỦA ÔNG VÀ BẠN ÔNG TẠI ĐÂY
 # =====================================================================
 FILES_NO_MIRROR = [
-    "7x6x4-2500.npy", 
-    "7x6x4-4000.npy"
+    "../data/7x6x4-2096_no-mirror_no-anti-leakage.npy", 
+    "../data/7x6x4-3000_no-mirror_no-anti-leakage.npy",
+    "../data/7x6x4-4000_no-mirror_no-anti-leakage.npy"
 ]
 
 FILES_WITH_MIRROR = [
-    "7x6x4-8000.npy"  # File dở dang dính lật gương của ông
+    "../data/7x6x4-10000_mirror_no-anti-leakage.npy",
+    "../data/7x6x4-14112_mirror_no-anti-leakage.npy"    # File dở dang dính lật gương của ông
 ]
 
 OUTPUT_TRAIN = "final_nnue_train.npy"
@@ -107,8 +109,8 @@ def main():
     print("🔀 Đang xáo trộn danh sách ván đấu để phá vỡ temporal leakage...")
     random.shuffle(all_games)
     
-    # 3. CHIA TÁCH CẤP ĐỘ VÁN ĐẤU (90% TRAIN / 10% VAL)
-    split_idx = int(0.9 * total_extracted_games)
+    # 3. CHIA TÁCH CẤP ĐỘ VÁN ĐẤU (80% TRAIN / 20% VAL)
+    split_idx = int(0.8 * total_extracted_games)
     train_games = all_games[:split_idx]
     val_games = all_games[split_idx:]
     
@@ -149,7 +151,7 @@ def main():
     # 4. ĐÓNG GÓI XUẤT FILE PHÂN TÁCH SẠCH SẼ
     mask_dtype = object if final_meta_board[0] * (final_meta_board[1] + 1) > 64 else np.uint64
     
-    print(f"\n💾 Đang đóng gói tệp TRAIN tổng lực (90%): '{OUTPUT_TRAIN}'...")
+    print(f"\n💾 Đang đóng gói tệp TRAIN tổng lực (80%): '{OUTPUT_TRAIN}'...")
     np.save(OUTPUT_TRAIN, {
         "us_mask": np.array(train_us, dtype=mask_dtype),
         "them_mask": np.array(train_them, dtype=mask_dtype),
@@ -158,7 +160,7 @@ def main():
         "meta_board": final_meta_board
     })
     
-    print(f"💾 Đang đóng gói tệp VAL bảo hiểm (10%): '{OUTPUT_VAL}'...")
+    print(f"💾 Đang đóng gói tệp VAL bảo hiểm (20%): '{OUTPUT_VAL}'...")
     np.save(OUTPUT_VAL, {
         "us_mask": np.array(val_us, dtype=mask_dtype),
         "them_mask": np.array(val_them, dtype=mask_dtype),

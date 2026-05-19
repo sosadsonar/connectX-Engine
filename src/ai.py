@@ -41,7 +41,7 @@ class AdvancedNegamaxAI:
 
         # KÍCH HOẠT PHẦN CỨNG MẠNG NƠ-RON NẾU CHẠY CHẾ ĐỘ CÓ NNUE
         if self.mode in ["nnue", "hybrid"]:
-            weights_path = "../nnue/nnue_weights (1).npz"
+            weights_path = "../nnue/best_nnue_model_84x64x32x1.npz"
             if os.path.exists(weights_path):
                 with np.load(weights_path) as data:
                     self.W1, self.b1 = data["W1"], data["b1"]
