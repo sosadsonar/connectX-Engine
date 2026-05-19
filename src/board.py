@@ -10,6 +10,7 @@ class ConnectXBoard:
         # 2 bảng bitboard riêng biệt: 0 cho Người chơi A, 1 cho Người chơi B
         self.boards = [0, 0] 
         self.heights = [c * self.col_height for c in range(self.w)]
+        self.max_heights = [(c * self.col_height) + self.h for c in range(self.w)]
         
         # Mặt nạ để loại bỏ hàng đệm khi cần tính toán ô trống
         self.valid_mask = 0
@@ -50,7 +51,7 @@ class ConnectXBoard:
 
     def get_valid_cols(self):
         """Trả về danh sách các cột hợp lệ"""
-        return [c for c in range(self.w) if (self.heights[c] % self.col_height) < self.h]
+        return [c for c in range(self.w) if self.heights[c] < self.max_heights[c]]
 
     def check_win(self, player_id):
         """Kiểm tra chiến thắng bằng Gập nhị phân - Tự động thích ứng với mọi X"""

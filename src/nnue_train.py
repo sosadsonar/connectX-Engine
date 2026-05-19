@@ -79,16 +79,16 @@ def train_nnue():
     parser = argparse.ArgumentParser(description="ConnectX NNUE Custom Stockfish Trainer with Resume Capability")
     parser.add_argument("--train_data", type=str, default="final_nnue_train.npy", help="Đường dẫn file dữ liệu Train sạch")
     parser.add_argument("--val_data", type=str, default="final_nnue_val.npy", help="Đường dẫn file dữ liệu Validation bảo hiểm")
-    parser.add_argument("--epochs", type=int, default=50, help="Số lượng kỷ nguyên huấn luyện")
+    parser.add_argument("--epochs", type=int, default=100, help="Số lượng kỷ nguyên huấn luyện")
     parser.add_argument("--batch_size", type=int, default=1024, help="Kích thước lô dữ liệu (Batch Size)")
-    parser.add_argument("--lr", type=float, default=0.001, help="Tốc độ học khởi điểm (Learning Rate)")
+    parser.add_argument("--lr", type=float, default=0.0001, help="Tốc độ học khởi điểm (Learning Rate)")
     parser.add_argument("--lambda_blend", type=float, default=0.5, help="Tỷ lệ trộn Lambda")
     parser.add_argument("--scale_k", type=float, default=35000.0, help="Hệ số nén Sigmoid quy đổi dải điểm sang WDL")
     parser.add_argument("--power", type=float, default=2.6, help="Số mũ của hàm Loss nâng cao Stockfish")
     parser.add_argument("--out", type=str, default="../nnue/best_nnue_model.pt", help="Tên file lưu mô hình tốt nhất")
     parser.add_argument("--ckpt_interval", type=int, default=5, help="Chu kỳ lưu checkpoint bảo hiểm (số epoch)")
     parser.add_argument("--resume", type=str, default="", help="Đường dẫn tới file .ckpt để train tiếp tục nếu máy bị sập")
-    parser.add_argument("--weight_decay", type=float, default=1e-5, help="Hệ số phạt phạt trọng số lớn L2 Regularization chống overfit")
+    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Hệ số phạt phạt trọng số lớn L2 Regularization chống overfit")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -113,7 +113,7 @@ def train_nnue():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     # 🎯 2. BÀI THUỐC ĐÃ THÊM: Tự động bẻ đôi LR nếu Val Loss đứng hình qua 3 Epoch liên tiếp
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.7, patience=5)
 
     start_epoch = 1
     best_val_loss = float('inf')

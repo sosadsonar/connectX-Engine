@@ -29,4 +29,4 @@ class TranspositionTable:
         idx = zobrist_key & self.mask
         existing = self.table[idx]
         if existing is None or depth >= existing[1]:
-            self.table[idx] = [zobrist_key, depth, flag, score, best_move]
+            self.table[idx] = (zobrist_key, depth, flag, score, best_move)

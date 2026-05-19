@@ -17,8 +17,8 @@ FILES_WITH_MIRROR = [
     "../data/7x6x4-14112_mirror_no-anti-leakage.npy"    # File dở dang dính lật gương của ông
 ]
 
-OUTPUT_TRAIN = "final_nnue_train.npy"
-OUTPUT_VAL = "final_nnue_val.npy"
+OUTPUT_TRAIN = "../data/final_nnue_train.npy"
+OUTPUT_VAL = "../data/final_nnue_val.npy"
 
 # Đặt Seed cố định để đảm bảo tính nhất quán khi chia tách ngẫu nhiên
 random.seed(42)
