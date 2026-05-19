@@ -60,7 +60,7 @@ class AdvancedNegamaxAI:
         nnue_score = self.nnue_eval.evaluate(board, current_player_id)
         
         # Bước 5: Hòa mạng (Blending)
-        return (4 * hce_score + 6 * nnue_score) // 10
+        return (3 * hce_score + 7 * nnue_score) // 10
 
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
         self.check_signals()

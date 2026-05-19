@@ -19,7 +19,9 @@ class NNUEEvaluator:
             self.W1, self.b1 = data["W1"], data["b1"]
             self.W2, self.b2 = data["W2"], data["b2"]
             self.W3, self.b3 = data["W3"], data["b3"]
-
+            # 🎯 Đọc Scale tự động (Nếu không có thì dùng mặc định 13194)
+            self.scale_k = float(data["scale_k"][0])
+        
         # 🛡️ SAFETY CHECK: Rào chắn bảo vệ không gian ma trận
         # Đảm bảo mạng được train cho đúng kích thước bàn cờ hiện tại
         if self.W1.shape[0] != self.input_size:
@@ -60,5 +62,5 @@ class NNUEEvaluator:
         # 4. Xuất kết quả (Output Layer)
         output = np.dot(self.h2_buffer, self.W3) + self.b3
         
-        # Giải nén Scale (35,000 khớp với file Train)
-        return int(output[0] * 35000.0)
+        # 🎯 Khôi phục điểm số tự động và siêu mượt
+        return int(output[0] * self.scale_k)

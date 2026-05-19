@@ -63,4 +63,4 @@ def inspect_npy_file(file_path, num_samples_to_show=3):
 
 if __name__ == "__main__":
     # Điền đường dẫn tới file bạn muốn kiểm tra vào đây
-    inspect_npy_file("../data/dataset_hybrid_nnue.npy.ckpt.npy", num_samples_to_show=3)
+    inspect_npy_file("../data/final_nnue_train.npy", num_samples_to_show=20)
