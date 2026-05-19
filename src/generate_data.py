@@ -52,22 +52,6 @@ def save_dataset(file_path, all_us_masks, all_them_masks, all_scores, all_result
     }
     np.save(file_path, dataset_matrix)
 
-def mirror_bitmask(mask: int) -> int:
-    """
-    ⚡ PHẢN ỨNG LẬP GƯƠNG TỐC ĐỘ TOÁN TỬ BIT (ZERO OVERHEAD)
-    Lật ngược toàn bộ bàn cờ Trái <-> Phải bằng cách tráo vị trí các cột bitmask.
-    Áp dụng chính xác cho cấu hình Bitboard 7x6 chuẩn John Tromp (7 bit/cột).
-    """
-    m = 0
-    m |= (mask & 0x7F) << 42              # Cột 0 dịch sang vị trí Cột 6
-    m |= (mask & 0x3F80) << 28            # Cột 1 dịch sang vị trí Cột 5
-    m |= (mask & 0x1FC000) << 14          # Cột 2 dịch sang vị trí Cột 4
-    m |= (mask & 0xFF80000)               # Cột 3 (Cột trung tâm) giữ nguyên vị trí
-    m |= (mask & 0x7F8000000) >> 14       # Cột 4 dịch ngược về Cột 2
-    m |= (mask & 0x3F800000000) >> 28     # Cột 5 dịch ngược về Cột 1
-    m |= (mask & 0x1FC0000000000) >> 42   # Cột 6 dịch ngược về Cột 0
-    return m
-
 def worker_game(task_info):
     """
     HÀM WORKER CHẠY TRÊN TỪNG NHÂN CPU ĐỘC LẬP (Lock-free):

@@ -5,8 +5,8 @@ import numpy as np
 
 def export_pytorch_to_numpy():
     # Cấu hình đường dẫn file đầu vào và đầu ra
-    model_path = "best_nnue_model.pt"
-    output_path = "nnue_weights.npz"
+    model_path = "../nnue/best_nnue_model (1).pt"
+    output_path = "../nnue/nnue_weights (1).npz"
 
     if not os.path.exists(model_path):
         print(f"❌ [LỖI] Không tìm thấy file '{model_path}' trong thư mục hiện tại!")

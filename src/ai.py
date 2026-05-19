@@ -1,25 +1,28 @@
 # ai.py
 import time
+import os
+import numpy as np
 from board import ConnectXBoard
 from zobrist import TranspositionTable
 from evaluator import BitboardCNNEvaluator
 from debug import SearchDebugger
-from move_order import MoveSorter  # Import bộ sorter mới tách
+from move_order import MoveSorter  
 
 EXACT = 0
 LOWERBOUND = 1
 UPPERBOUND = 2
 
 class AdvancedNegamaxAI:
-    def __init__(self, config_weights, player_id: int, tt_exponent=23):
-        """Khởi tạo AI với bộ não PVS + IDS + Aspiration Windows + Quiescence Search chuẩn hóa Ply"""
-        self.weights = config_weights
+    def __init__(self, config_weights, player_id: int, mode: str = "heuristic", tt_exponent=23):
+        """
+        Khởi tạo AI hỗ trợ đa chế độ: 
+        - "heuristic": Thuần công thức lọc tay cũ
+        - "nnue": Thuần mạng nơ-ron thực chiến
+        - "hybrid": Lò luyện lai mã CỔNG GÁC CHIẾN THUẬT (Gated Hybrid) 🛡️🔥
+        """
         self.player_id = player_id
-        self.evaluator = BitboardCNNEvaluator(config_weights)
+        self.mode = mode  # "heuristic", "nnue", "hybrid"
         self.tt = TranspositionTable(exponent=tt_exponent)
-        self.debugger = SearchDebugger(config_weights, player_id)
-        
-        # Bộ sắp xếp move sẽ được khởi tạo lười (lazy init) khi biết kích thước board
         self.sorter = None
         
         self.start_time = 0
@@ -27,20 +30,84 @@ class AdvancedNegamaxAI:
         self.is_timeout = False
         self.node_count = 0
 
+        # CẤU HÌNH TÀI NGUYÊN NỀN TẢNG THÍCH ỨNG
+        if self.mode == "nnue":
+            self.weights = {"WIN_BASE": 10000000, "ASPIRATION_DELTA": 3000}
+        else:
+            self.weights = config_weights
+            self.evaluator = BitboardCNNEvaluator(config_weights)
+            
+        self.debugger = SearchDebugger(self.weights, player_id)
+
+        # KÍCH HOẠT PHẦN CỨNG MẠNG NƠ-RON NẾU CHẠY CHẾ ĐỘ CÓ NNUE
+        if self.mode in ["nnue", "hybrid"]:
+            weights_path = "../nnue/nnue_weights (1).npz"
+            if os.path.exists(weights_path):
+                with np.load(weights_path) as data:
+                    self.W1, self.b1 = data["W1"], data["b1"]
+                    self.W2, self.b2 = data["W2"], data["b2"]
+                    self.W3, self.b3 = data["W3"], data["b3"]
+                print(f"🧠 [HỆ THỐNG] Đã kích hoạt Não NNUE NumPy cho chế độ: {self.mode.upper()} (Bot P{player_id})")
+            else:
+                raise FileNotFoundError(f"❌ [LỖI Chí Mạng] Không tìm thấy tệp trọng số '{weights_path}' trong repo!")
+                
+            self.shifts = np.array([c * 7 + r for c in range(7) for r in range(6)], dtype=np.uint64)
+            self.input_buffer = np.zeros(84, dtype=np.float32)
+
     def check_signals(self):
-        """Kiểm tra thời gian giới hạn tập trung để tránh overhead gọi time.time() liên tục"""
+        """Kiểm tra thời gian giới hạn tập trung"""
         self.node_count += 1
         if self.node_count & 1023 == 0:
             if time.time() - self.start_time > self.time_limit:
                 self.is_timeout = True
 
+    def evaluate_nnue(self, board: ConnectXBoard, current_player_id: int) -> int:
+        """Hàm lượng giá NNUE Clipped ReLU tốc độ phần cứng bằng NumPy"""
+        us_mask = board.boards[current_player_id]
+        them_mask = board.boards[1 - current_player_id]
+        
+        self.input_buffer[:42] = (us_mask >> self.shifts) & 1
+        self.input_buffer[42:] = (them_mask >> self.shifts) & 1
+        
+        h1 = np.clip(self.input_buffer @ self.W1 + self.b1, 0.0, 1.0)
+        h2 = np.clip(h1 @ self.W2 + self.b2, 0.0, 1.0)
+        output = h2 @ self.W3 + self.b3
+        return int(output[0])
+
+    def evaluate_hybrid(self, board: ConnectXBoard, current_player_id: int) -> int:
+        """
+        🛡️ VŨ KHÍ GATED HYBRID CHỐNG MÙ CHIẾN THUẬT:
+        Hiện thực hóa chính xác 100% sơ đồ thiết kế bộ lọc cổng gác của ông.
+        """
+        # 1. Ép HCE chạy trước để dò quét bẫy rập hình học (Fork/Sát cục)
+        hce_score = self.evaluator.evaluate(board, current_player_id)
+        
+        # ⚔️ 【 KỊCH BẢN A 】: Phát hiện biến động lớn (Ngưỡng bẫy Fork từ 500k điểm trở lên)
+        if abs(hce_score) >= 500000:
+            return hce_score # HCE giữ quyền phán quyết tuyệt đối, bỏ qua NNUE
+            
+        # 🕊️ 【 KỊCH BẢN B 】: Thế cờ lặng (Quiet Position)
+        # Triệu hồi trực giác vĩ mô của mạng nơ-ron phối hợp xử lý vị trí
+        nnue_score = self.evaluate_nnue(board, current_player_id)
+        
+        # Trộn điểm theo tỷ lệ vàng sơ đồ: 30% Chiến thuật HCE + 70% Vị trí chiến lược NNUE
+        final_score = (0.3 * hce_score) + (0.7 * nnue_score)
+        return int(final_score)
+
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
-        """Quiescence Search - Bản sửa lỗi Ply Penalty cho đòn Fork"""
+        """Quiescence Search - Tìm kiếm tĩnh chặn đòn sát cục ngắn hạn"""
         self.check_signals()
         if self.is_timeout:
             return 0
 
-        stand_pat = self.evaluator.evaluate(board, current_player_id)
+        # RẼ NHÁNH ĐƯỜNG ỐNG LƯỢNG GIÁ TĨNH VỚI LÕI CỔNG GÁC MỚI
+        if self.mode == "nnue":
+            stand_pat = self.evaluate_nnue(board, current_player_id)
+        elif self.mode == "hybrid":
+            stand_pat = self.evaluate_hybrid(board, current_player_id)
+        else:
+            stand_pat = self.evaluator.evaluate(board, current_player_id)
+            
         if stand_pat >= beta:
             return stand_pat
         alpha = max(alpha, stand_pat)
@@ -48,13 +115,12 @@ class AdvancedNegamaxAI:
         valid_cols = board.get_valid_cols()
         opp_id = 1 - current_player_id
 
-        # 1. Nếu mình ăn được luôn trong tầm nhìn tĩnh -> Thắng ở lượt kế tiếp (ply + 1)
         for col in valid_cols:
             board.make_move(col, current_player_id)
             is_win = board.check_win(current_player_id)
             board.undo_move(col, current_player_id)
             if is_win:
-                return self.weights["WIN_BASE"] - (ply + 1) # SỬA TẠI ĐÂY
+                return self.weights["WIN_BASE"] - (ply + 1)
 
         forced_cols = []
         for col in valid_cols:
@@ -64,9 +130,8 @@ class AdvancedNegamaxAI:
             if is_win:
                 forced_cols.append(col)
 
-        # 2. Nếu đối thủ có Fork -> Mình sẽ bị thua sau 2 nước nữa (ply + 2)
         if len(forced_cols) > 1:
-            return -self.weights["WIN_BASE"] + (ply + 2) # SỬA TẠI ĐÂY
+            return -self.weights["WIN_BASE"] + (ply + 2)
 
         for col in forced_cols:
             board.make_move(col, current_player_id)
@@ -88,7 +153,6 @@ class AdvancedNegamaxAI:
         if self.is_timeout:
             return 0  
 
-        # 1. Tra cứu Transposition Table & Giải nén điểm sát cục động
         tt_entry = self.tt.lookup(board.zobrist_key)
         if tt_entry and tt_entry[1] >= depth:
             flag, score = tt_entry[2], tt_entry[3]
@@ -107,7 +171,6 @@ class AdvancedNegamaxAI:
             if alpha >= beta:
                 return score
 
-        # 2. Xử lý trạng thái kết thúc (Terminal Node)
         opp_id = 1 - current_player_id
         if board.check_win(opp_id):
             return -self.weights["WIN_BASE"] + ply
@@ -116,9 +179,13 @@ class AdvancedNegamaxAI:
 
         valid_cols = board.get_valid_cols()
         if depth == 0 or not valid_cols:
-            return self.quiesce(board, alpha, beta, current_player_id, ply)
+            if self.mode == "nnue":
+                return self.quiesce(board, alpha, beta, current_player_id, ply)
+            elif self.mode == "hybrid":
+                return self.quiesce(board, alpha, beta, current_player_id, ply)
+            else:
+                return self.quiesce(board, alpha, beta, current_player_id, ply)
 
-        # 3. ĐỒNG BỘ: Truyền đầy đủ current_player_id và depth vào bộ Sorter để đồng bộ logic
         tt_move = tt_entry[4] if tt_entry else None
         ordered_moves = self.sorter.get_ordered_moves(
             board, valid_cols, tt_move, ply, 
@@ -128,7 +195,6 @@ class AdvancedNegamaxAI:
         max_eval = float('-inf')
         best_move = ordered_moves[0] if ordered_moves else None
 
-        # 4. Lõi tìm kiếm biến thể chính (PVS)
         for i, col in enumerate(ordered_moves):
             board.make_move(col, current_player_id)
             if i == 0:
@@ -148,17 +214,13 @@ class AdvancedNegamaxAI:
                 
             alpha = max(alpha, score)
             if alpha >= beta:
-                # BETA-CUTOFF: Nước đi quá tốt, cập nhật ngay bộ nhớ Heuristics kì cựu
-                if col != tt_move:  # Không lưu trùng nếu nó đã là nước đi tốt từ TT
-                    # Đẩy nước Killer cũ xuống slot 2, lưu nước mới vào slot 1
+                if col != tt_move:  
                     if self.sorter.killer_moves[ply][0] != col:
                         self.sorter.killer_moves[ply][1] = self.sorter.killer_moves[ply][0]
                         self.sorter.killer_moves[ply][0] = col
-                    # Cộng điểm History tỉ lệ thuận với bình phương độ sâu nhánh cờ
                     self.sorter.history_table[col] += depth * depth
                 break  
 
-        # 5. Lưu trữ kết quả vào bảng băm (TT Store)
         if not self.is_timeout:
             if max_eval <= alpha_orig:
                 flag = UPPERBOUND
@@ -178,7 +240,6 @@ class AdvancedNegamaxAI:
         return max_eval
 
     def _extract_pv(self, board: ConnectXBoard, first_move: int, max_pv_depth: int) -> str:
-        """Truy vết chuỗi nước đi lý tưởng (PV Line) từ Transposition Table"""
         pv = [first_move]
         board.make_move(first_move, self.player_id)
         states = [(first_move, self.player_id)]
@@ -213,7 +274,6 @@ class AdvancedNegamaxAI:
         if len(valid_cols) == 1:
             return valid_cols[0]
 
-        # Khởi tạo tài nguyên hệ thống
         self.start_time = time.time()
         self.time_limit = time_limit
         self.is_timeout = False
@@ -229,10 +289,7 @@ class AdvancedNegamaxAI:
         ASPIRATION_DELTA = int(self.weights.get("ASPIRATION_DELTA", 3000))
         best_completed_depth_info = None
 
-        # --- LOOP 1: ITERATIVE DEEPENING (Tăng dần độ sâu) ---
         for current_depth in range(1, max_depth + 1):
-            
-            # Thiết lập cửa sổ Aspiration Window ban đầu cho độ sâu này
             if current_depth >= 3:
                 alpha = last_depth_score - ASPIRATION_DELTA
                 beta = last_depth_score + ASPIRATION_DELTA
@@ -242,17 +299,14 @@ class AdvancedNegamaxAI:
 
             depth_timed_out = False
 
-            # TỐI ƯU: Đưa việc sinh và sắp xếp nước đi ở Root ra ngoài vòng lặp Re-search.
             tt_entry = self.tt.lookup(board.zobrist_key)
             best_move_suggestion = tt_entry[4] if tt_entry else None
             
-            # ĐỒNG BỘ: Truyền đầy đủ thông tin ID của mình và độ sâu hiện tại vào Sorter tại Root
             ordered_cols = self.sorter.get_ordered_moves(
                 board, valid_cols, best_move_suggestion, ply=1, 
                 current_player_id=self.player_id, last_move=last_move, depth=current_depth
             )
 
-            # --- LOOP 2: ASPIRATION RE-SEARCH (Tìm lại nếu vỡ cửa sổ) ---
             while True:
                 current_alpha = alpha
                 current_beta = beta
@@ -261,18 +315,13 @@ class AdvancedNegamaxAI:
                 best_col = None
                 scores_cache = {}
                 
-                # --- LOOP 3: ROOT MOVES ITERATION (Duyệt các cột tại gốc) ---
                 for i, col in enumerate(ordered_cols):
                     board.make_move(col, self.player_id)
-                    
                     if i == 0:
-                        # Nước đi kỳ vọng tốt nhất (PV Move): Duyệt với toàn bộ cửa sổ hiện tại
                         score = -self.negamax(board, current_depth - 1, -current_beta, -current_alpha, 1 - self.player_id, ply=1)
                     else:
-                        # Các nước đi phía sau: Thử nghiệm với cửa sổ hẹp (Null Window)
                         score = -self.negamax(board, current_depth - 1, -current_alpha - 1, -current_alpha, 1 - self.player_id, ply=1)
                         if current_alpha < score < current_beta and not self.is_timeout:
-                            # Nếu nước cờ thử nghiệm tốt bất thường -> Nghiên cứu lại với cửa sổ chuẩn
                             score = -self.negamax(board, current_depth - 1, -current_beta, -score, 1 - self.player_id, ply=1)
                             
                     board.undo_move(col, self.player_id)
@@ -294,25 +343,21 @@ class AdvancedNegamaxAI:
                     depth_timed_out = True
                     break
 
-                # Kiểm tra xem kết quả tìm kiếm có bị tràn ra ngoài biên Aspiration Window không
                 if best_score <= alpha:
-                    alpha = float('-inf')  # Thất bại thảm hại (Fail-Low)
+                    alpha = float('-inf')  
                     continue
                 elif best_score >= beta:
-                    beta = float('inf')    # Đột biến bất ngờ (Fail-High)
+                    beta = float('inf')    
                     continue
-                
-                break  # Cửa sổ bọc chuẩn xác, thoát Loop 2 để lên độ sâu tiếp theo
+                break  
 
             if depth_timed_out:
                 break
                 
-            # Lưu lại thành quả của độ sâu vừa hoàn thành trọn vẹn
             if best_col is not None:
                 overall_best_col = best_col
                 last_depth_score = best_score  
                 
-                # Trích xuất dữ liệu phục vụ Debug hiển thị PV Line
                 sorted_cols = sorted(scores_cache.keys(), key=lambda c: scores_cache[c], reverse=True)
                 top_variations = []
                 for c in sorted_cols[:3]:
@@ -329,7 +374,6 @@ class AdvancedNegamaxAI:
             if best_score >= self.weights["WIN_BASE"] - 100:
                 break
                 
-        # In kết quả báo cáo của độ sâu hoàn thiện nhất
         if verbose and best_completed_depth_info is not None:
             self.debugger.print_top_variations(
                 deepest_depth=best_completed_depth_info["depth"],
@@ -338,7 +382,5 @@ class AdvancedNegamaxAI:
                 top_variations=best_completed_depth_info["variations"]
             )
             
-        # GENERATE_DATA ĐỌC ĐƯỢC ĐIỂM LƯỢNG GIÁ:
         self.last_score = last_depth_score
-                
         return overall_best_col
