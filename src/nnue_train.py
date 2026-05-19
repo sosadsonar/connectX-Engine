@@ -5,20 +5,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 
 class ConnectXNNUE(nn.Module):
-    """Kiến trúc mạng NNUE ConnectX chuẩn hóa: 84 -> 128 -> 64 -> 1"""
+    """Kiến trúc mạng NNUE ConnectX chuẩn hóa: 84 -> 128 -> 64 -> 1 (Dùng Clipped ReLU)"""
     def __init__(self, input_size=84, hidden1=128, hidden2=64):
         super(ConnectXNNUE, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden1)
         self.fc2 = nn.Linear(hidden1, hidden2)
         self.fc3 = nn.Linear(hidden2, 1)
-        self.activation = nn.Sigmoid()
 
     def forward(self, x):
-        x = self.activation(self.fc1(x))
-        x = self.activation(self.fc2(x))
+        x = torch.clamp(self.fc1(x), min=0.0, max=1.0)
+        x = torch.clamp(self.fc2(x), min=0.0, max=1.0)
         x = self.fc3(x)
         return x
 
@@ -52,7 +51,7 @@ class ConnectXDataset(Dataset):
                 idx += 1
                 
         self.inputs = torch.tensor(self.inputs, dtype=torch.float32)
-        print("[HỆ THỐNG DATA] Đường ống giải nén hoàn tất! Dữ liệu đã sẵn sàng nạp vào RAM.")
+        print("[HỆ THỐNG DATA] Đường ống giải nén hoàn tất! Dữ liệu đã sẵn sàng nạp vào RAM.\n")
 
     def __len__(self):
         return len(self.scores)
@@ -77,7 +76,9 @@ class StockfishLoss(nn.Module):
 
 def train_nnue():
     parser = argparse.ArgumentParser(description="ConnectX NNUE Custom Stockfish Trainer with Resume Capability")
-    parser.add_argument("--data", type=str, default="../data/dataset_hybrid_nnue.npy", help="Đường dẫn file dữ liệu ván đấu .npy")
+    # Thay đổi tham số truyền vào: Nhận riêng biệt file Train và file Val tổng hợp sạch
+    parser.add_argument("--train_data", type=str, default="final_nnue_train.npy", help="Đường dẫn file dữ liệu Train sạch")
+    parser.add_argument("--val_data", type=str, default="final_nnue_val.npy", help="Đường dẫn file dữ liệu Validation bảo hiểm")
     parser.add_argument("--epochs", type=int, default=30, help="Số lượng kỷ nguyên huấn luyện")
     parser.add_argument("--batch_size", type=int, default=1024, help="Kích thước lô dữ liệu (Batch Size)")
     parser.add_argument("--lr", type=float, default=0.001, help="Tốc độ học (Learning Rate)")
@@ -91,29 +92,27 @@ def train_nnue():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("\n=====================================================")
-    print(" 🔥 KÍCH HOẠT LÒ LUYỆN MA TRẬN MẠNG NNUE BẢO HIỂM SẬP NGUỒN")
+    print(" 🔥 KÍCH HOẠT LÒ LUYỆN MA TRẬN MẠNG NNUE CHỐNG RÒ RỈ")
     print(f" Thiết bị phần cứng đang gánh tải: {device} 🚀")
     print(f" Tự động lưu file phục hồi tiến trình sau mỗi: {args.ckpt_interval} Epoch 🛡️")
     print("=====================================================\n")
 
-    full_dataset = ConnectXDataset(args.data)
-    train_size = int(0.9 * len(full_dataset))
-    val_size = len(full_dataset) - train_size
+    # ĐỌC TRỰC TIẾP HAI FILE ĐỘC LẬP (KHÔNG DÙNG RANDOM_SPLIT NỮA)
+    train_dataset = ConnectXDataset(args.train_data)
+    val_dataset = ConnectXDataset(args.val_data)
     
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
-    model = ConnectXNNUE(input_size=full_dataset.w * full_dataset.h * 2).to(device)
+    model = ConnectXNNUE(input_size=train_dataset.w * train_dataset.h * 2).to(device)
     criterion = StockfishLoss(lambda_blend=args.lambda_blend, scale_k=args.scale_k, power=args.power)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    # Khởi tạo các mốc nền tảng
     start_epoch = 1
     best_val_loss = float('inf')
     checkpoint_path = f"{args.out}.ckpt"
 
-    # 🎯 TỰ ĐỘNG KHÔI PHỤC TIẾN TRÌNH NẾU ĐƯỢC YÊU CẦU HOẶC TỰ PHÁT HIỆN FILE BẢO HIỂM
+    # TỰ ĐỘNG KHÔI PHỤC TIẾN TRÌNH NẾU ĐƯỢC YÊU CẦU HOẶC TỰ PHÁT HIỆN FILE BẢO HIỂM
     resume_path = args.resume if args.resume else checkpoint_path
     if resume_path and os.path.exists(resume_path):
         print(f"[HỆ THỐNG] Phát hiện file checkpoint '{resume_path}'. Đang khôi phục trạng thái cũ...")
@@ -124,7 +123,7 @@ def train_nnue():
         best_val_loss = checkpoint['best_val_loss']
         print(f"▶️ Khôi phục thành công! Sẽ tiếp tục cày từ Epoch {start_epoch} (Best Val Loss cũ: {best_val_loss:.6f})")
 
-    # Vòng lặp huấn luyện chính (Bắt đầu từ start_epoch thay vì 1)
+    # Vòng lặp huấn luyện chính
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         train_loss = 0.0
@@ -160,13 +159,13 @@ def train_nnue():
 
         print(f"Epoch [{epoch:02d}/{args.epochs:02d}] -> Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}")
 
-        # 1. Cơ chế Checkpoint mô hình TỐT NHẤT (Mục tiêu cuối cùng)
+        # 1. Cơ chế Checkpoint mô hình TỐT NHẤT
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), args.out)
             print(f"   💾 [SAVE] Đã cập nhật ma trận trọng số tối ưu tại epoch {epoch} vào '{args.out}'")
 
-        # 2. Cơ chế Checkpoint BẢO HIỂM CHỐNG MẤT ĐIỆN (Lưu định kỳ toàn bộ trạng thái để Resume)
+        # 2. Cơ chế Checkpoint BẢO HIỂM CHỐNG MẤT ĐIỆN
         if epoch % args.ckpt_interval == 0 or epoch == args.epochs:
             torch.save({
                 'epoch': epoch,
@@ -176,7 +175,6 @@ def train_nnue():
             }, checkpoint_path)
             print(f"   🛡️ [CHECKPOINT] Đã lưu bảo hiểm toàn bộ bộ nhớ tại epoch {epoch} vào '{checkpoint_path}'")
 
-    # Tự động dọn dẹp file checkpoint dự phòng sau khi chiến dịch kết thúc mỹ mãn
     if os.path.exists(checkpoint_path):
         os.remove(checkpoint_path)
 
