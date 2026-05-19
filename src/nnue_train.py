@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 
 class ConnectXNNUE(nn.Module):
     """Kiến trúc mạng NNUE ConnectX chuẩn hóa: 84 -> 64 -> 32 -> 1 (Dùng Clipped ReLU tối ưu NumPy)"""
-    def __init__(self, input_size=84, hidden1=128, hidden2=64):
+    def __init__(self, input_size=84, hidden1=64, hidden2=32):
         super(ConnectXNNUE, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden1)
         self.fc2 = nn.Linear(hidden1, hidden2)
