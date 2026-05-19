@@ -7,6 +7,7 @@ from zobrist import TranspositionTable
 from evaluator import BitboardCNNEvaluator
 from debug import SearchDebugger
 from move_order import MoveSorter  
+from nnue_eval import NNUEEvaluator
 
 EXACT = 0
 LOWERBOUND = 1
@@ -28,29 +29,11 @@ class AdvancedNegamaxAI:
         self.is_timeout = False
         self.node_count = 0
 
-        if self.mode == "nnue":
-            self.weights = {"WIN_BASE": 10000000, "ASPIRATION_DELTA": 3000}
-        else:
-            self.weights = config_weights
-            self.evaluator = BitboardCNNEvaluator(config_weights)
-            
+        self.weights = config_weights
+        self.evaluator = BitboardCNNEvaluator(config_weights)
         self.debugger = SearchDebugger(self.weights, player_id)
 
-        if self.mode in ["nnue", "hybrid"]:
-            weights_path = "../nnue/best_nnue_model_84x64x32x1.npz"
-            if os.path.exists(weights_path):
-                with np.load(weights_path) as data:
-                    self.W1, self.b1 = data["W1"], data["b1"]
-                    self.W2, self.b2 = data["W2"], data["b2"]
-                    self.W3, self.b3 = data["W3"], data["b3"]
-            else:
-                raise FileNotFoundError(f"❌ [LỖI Chí Mạng] Không tìm thấy tệp trọng số '{weights_path}' trong repo!")
-                
-            self.shifts = np.array([c * 7 + r for c in range(7) for r in range(6)], dtype=np.uint64)
-            
-            self.input_buffer = np.zeros(84, dtype=np.float32)
-            self.h1_buffer = np.zeros(64, dtype=np.float32) 
-            self.h2_buffer = np.zeros(32, dtype=np.float32)
+        self.nnue_eval = None
 
     def check_signals(self):
         self.node_count += 1
@@ -59,31 +42,25 @@ class AdvancedNegamaxAI:
                 self.is_timeout = True
                 raise SearchTimeoutException()
 
-    def evaluate_nnue(self, board: ConnectXBoard, current_player_id: int) -> int:
-        us_mask = board.boards[current_player_id]
-        them_mask = board.boards[1 - current_player_id]
-        
-        self.input_buffer[:42] = (us_mask >> self.shifts) & 1
-        self.input_buffer[42:] = (them_mask >> self.shifts) & 1
-        
-        np.dot(self.input_buffer, self.W1, out=self.h1_buffer)
-        self.h1_buffer += self.b1
-        np.clip(self.h1_buffer, 0.0, 1.0, out=self.h1_buffer)
-        
-        np.dot(self.h1_buffer, self.W2, out=self.h2_buffer)
-        self.h2_buffer += self.b2
-        np.clip(self.h2_buffer, 0.0, 1.0, out=self.h2_buffer)
-        
-        output = np.dot(self.h2_buffer, self.W3) + self.b3
-        return int(output[0])
 
     def evaluate_hybrid(self, board: ConnectXBoard, current_player_id: int) -> int:
+        if self.nnue_eval is None:
+            # Trỏ tự động tới file weights ứng với bàn cờ (ví dụ: best_nnue_model_7x6.npz)
+            model_path = f"../nnue/best_nnue_model_84x64x32x1.npz"
+            self.nnue_eval = NNUEEvaluator(model_path, board.w, board.h)
+
+        # Bước 1: Gọi HCE
         hce_score = self.evaluator.evaluate(board, current_player_id)
+        
+        # Bước 2: Gatekeeper (Trạm kiểm soát)
+        # 500,000 là mức chuẩn vì FORK_SCORE đang là 613,562
         if abs(hce_score) >= 500000:
             return hce_score 
             
-        nnue_score = self.evaluate_nnue(board, current_player_id)
-        return (3 * hce_score + 7 * nnue_score) // 10
+        nnue_score = self.nnue_eval.evaluate(board, current_player_id)
+        
+        # Bước 5: Hòa mạng (Blending)
+        return (4 * hce_score + 6 * nnue_score) // 10
 
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
         self.check_signals()
@@ -361,3 +338,4 @@ class AdvancedNegamaxAI:
             
         self.last_score = last_depth_score
         return overall_best_col
+        
