@@ -44,23 +44,62 @@ class AdvancedNegamaxAI:
 
 
     def evaluate_hybrid(self, board: ConnectXBoard, current_player_id: int) -> int:
-        if self.nnue_eval is None:
-            # Trỏ tự động tới file weights ứng với bàn cờ (ví dụ: best_nnue_model_7x6.npz)
-            model_path = f"../nnue/best_nnue_model_84x64x32x1.npz"
-            self.nnue_eval = NNUEEvaluator(model_path, board.w, board.h)
-
-        # Bước 1: Gọi HCE
+        # Lấy điểm HCE trước
         hce_score = self.evaluator.evaluate(board, current_player_id)
         
-        # Bước 2: Gatekeeper (Trạm kiểm soát)
-        # 500,000 là mức chuẩn vì FORK_SCORE đang là 613,562
+        # 1. Gatekeeper: Sát cục hiển nhiên thì HCE quyết định ngay (100%)
         if abs(hce_score) >= 500000:
             return hce_score 
-            
-        nnue_score = self.nnue_eval.evaluate(board, current_player_id)
+
+        # Đếm quân cờ thực tế trên bàn
+        occupied_mask = board.boards[0] | board.boards[1]
+        pieces = occupied_mask.bit_count()
         
-        # Bước 5: Hòa mạng (Blending)
-        return (3 * hce_score + 7 * nnue_score) // 10
+        # Cache ranh giới động (1/7 - 3/7 - 3/7)
+        if getattr(self, 'phase_bounds', None) is None:
+            N = board.w * board.h
+            op_limit = N // 7
+            mid_limit = (N * 4) // 7 # 1/7 + 3/7 = 4/7
+            op_gap = max(1, op_limit)
+            mid_gap = max(1, mid_limit - op_limit)
+            self.phase_bounds = (op_limit, mid_limit, op_gap, mid_gap)
+            
+        op_limit, mid_limit, op_gap, mid_gap = self.phase_bounds
+
+        # ---- 🏆 TỐI ƯU HÓA: TÀN CUỘC THUẦN HCE (DEPTH 18 TOÀN QUYỀN) ----
+        # Nếu đã bước vào Tàn cuộc (số quân > mid_limit), 
+        # do Depth 18 đã nhìn thấy tận cùng ván cờ, ta dùng 100% HCE.
+        # BỎ QUA HOÀN TOÀN việc gọi NNUE để giải phóng 100% tốc độ duyệt!
+        if pieces > mid_limit:
+            return hce_score
+
+        # ---- LAZY INIT MẠNG NNUE (Chỉ chạy ở Khai cuộc và Trung cuộc) ----
+        if self.nnue_eval is None:
+            model_name = f"best_nnue_model_{board.w}x{board.h}.npz"
+            model_path = f"../nnue/{model_name}"
+            try:
+                from nnue_eval import NNUEEvaluator
+                self.nnue_eval = NNUEEvaluator(model_path, board.w, board.h)
+            except Exception as e:
+                self.mode = "heuristic"
+                return hce_score
+
+        # Đánh giá NNUE
+        nnue_score = self.nnue_eval.evaluate(board, current_player_id)
+
+        # ---- PHÂN CHIA TRỌNG SỐ CHO KHAI CUỘC VÀ TRUNG CUỘC ----
+        if pieces <= op_limit:
+            # KHAI CUỘC (1/7): NNUE dẫn đường tuyệt đối (HCE chiếm 5% -> 15%)
+            hce_weight = 5 + (pieces * 10) // op_gap
+        else:
+            # TRUNG CUỘC (3/7): Chuyển giao quyền lực (HCE chiếm 15% -> 100%)
+            # Khi chạm mốc mid_limit (ví dụ 24 quân), hce_weight sẽ đạt đúng 100%
+            hce_weight = 15 + ((pieces - op_limit) * 85) // mid_gap
+
+        nnue_weight = 100 - hce_weight
+        
+        # Hòa mạng
+        return (hce_score * hce_weight + nnue_score * nnue_weight) // 100
 
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
         self.check_signals()
