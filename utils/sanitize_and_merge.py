@@ -13,8 +13,10 @@ FILES_NO_MIRROR = [
 ]
 
 FILES_WITH_MIRROR = [
-    "../data/7x6x4-10000_mirror_no-anti-leakage.npy",
-    "../data/7x6x4-14112_mirror_no-anti-leakage.npy"    # File dở dang dính lật gương của ông
+    "../data/7x6x4-10000_mirror.npy",
+    "../data/7x6x4-14112_mirror.npy",
+    "../data/7x6x4-6500_mirror_train.npy",  
+    "../data/7x6x4-6500_mirror_val.npy"
 ]
 
 OUTPUT_TRAIN = "../data/final_nnue_train.npy"
