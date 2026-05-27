@@ -1,13 +1,11 @@
 # ai.py
 import time
-import os
-import numpy as np
 from board import ConnectXBoard
 from zobrist import TranspositionTable
 from evaluator import BitboardCNNEvaluator
 from debug import SearchDebugger
 from move_order import MoveSorter  
-from nnue_eval import NNUEEvaluator
+from opening_book import PythonOpeningBookReader
 
 EXACT = 0
 LOWERBOUND = 1
@@ -20,20 +18,20 @@ class SearchTimeoutException(Exception):
 class AdvancedNegamaxAI:
     def __init__(self, config_weights, player_id: int, mode: str = "heuristic", tt_exponent=23):
         self.player_id = player_id
-        self.mode = mode
+        self.mode = "heuristic" # Ép buộc chạy chế độ heuristic thuần túy
         self.tt = TranspositionTable(exponent=tt_exponent)
         self.sorter = None
         
         self.start_time = 0
-        self.time_limit = 1.8  
+        self.time_limit = 2.2 
         self.is_timeout = False
         self.node_count = 0
 
         self.weights = config_weights
         self.evaluator = BitboardCNNEvaluator(config_weights)
         self.debugger = SearchDebugger(self.weights, player_id)
+        self.native_book = PythonOpeningBookReader(book_path="../data/7x6.book")
 
-        self.nnue_eval = None
 
     def check_signals(self):
         self.node_count += 1
@@ -41,65 +39,6 @@ class AdvancedNegamaxAI:
             if time.perf_counter() - self.start_time > self.time_limit:
                 self.is_timeout = True
                 raise SearchTimeoutException()
-
-
-    def evaluate_hybrid(self, board: ConnectXBoard, current_player_id: int) -> int:
-        # Lấy điểm HCE trước
-        hce_score = self.evaluator.evaluate(board, current_player_id)
-        
-        # 1. Gatekeeper: Sát cục hiển nhiên thì HCE quyết định ngay (100%)
-        if abs(hce_score) >= 500000:
-            return hce_score 
-
-        # Đếm quân cờ thực tế trên bàn
-        occupied_mask = board.boards[0] | board.boards[1]
-        pieces = occupied_mask.bit_count()
-        
-        # Cache ranh giới động (1/7 - 3/7 - 3/7)
-        if getattr(self, 'phase_bounds', None) is None:
-            N = board.w * board.h
-            op_limit = N // 7
-            mid_limit = (N * 4) // 7 # 1/7 + 3/7 = 4/7
-            op_gap = max(1, op_limit)
-            mid_gap = max(1, mid_limit - op_limit)
-            self.phase_bounds = (op_limit, mid_limit, op_gap, mid_gap)
-            
-        op_limit, mid_limit, op_gap, mid_gap = self.phase_bounds
-
-        # ---- 🏆 TỐI ƯU HÓA: TÀN CUỘC THUẦN HCE (DEPTH 18 TOÀN QUYỀN) ----
-        # Nếu đã bước vào Tàn cuộc (số quân > mid_limit), 
-        # do Depth 18 đã nhìn thấy tận cùng ván cờ, ta dùng 100% HCE.
-        # BỎ QUA HOÀN TOÀN việc gọi NNUE để giải phóng 100% tốc độ duyệt!
-        if pieces > mid_limit:
-            return hce_score
-
-        # ---- LAZY INIT MẠNG NNUE (Chỉ chạy ở Khai cuộc và Trung cuộc) ----
-        if self.nnue_eval is None:
-            model_name = f"best_nnue_model_{board.w}x{board.h}.npz"
-            model_path = f"../nnue/{model_name}"
-            try:
-                from nnue_eval import NNUEEvaluator
-                self.nnue_eval = NNUEEvaluator(model_path, board.w, board.h)
-            except Exception as e:
-                self.mode = "heuristic"
-                return hce_score
-
-        # Đánh giá NNUE
-        nnue_score = self.nnue_eval.evaluate(board, current_player_id)
-
-        # ---- PHÂN CHIA TRỌNG SỐ CHO KHAI CUỘC VÀ TRUNG CUỘC ----
-        if pieces <= op_limit:
-            # KHAI CUỘC (1/7): NNUE dẫn đường tuyệt đối (HCE chiếm 5% -> 15%)
-            hce_weight = 5 + (pieces * 10) // op_gap
-        else:
-            # TRUNG CUỘC (3/7): Chuyển giao quyền lực (HCE chiếm 15% -> 100%)
-            # Khi chạm mốc mid_limit (ví dụ 24 quân), hce_weight sẽ đạt đúng 100%
-            hce_weight = 15 + ((pieces - op_limit) * 85) // mid_gap
-
-        nnue_weight = 100 - hce_weight
-        
-        # Hòa mạng
-        return (hce_score * hce_weight + nnue_score * nnue_weight) // 100
 
     def quiesce(self, board: ConnectXBoard, alpha: int, beta: int, current_player_id: int, ply: int) -> int:
         self.check_signals()
@@ -111,7 +50,6 @@ class AdvancedNegamaxAI:
         valid_cols = board.get_valid_cols()
         opp_id = 1 - current_player_id
 
-        # 🚀 SỬ DỤNG TRY...FINALLY BẢO VỆ UNDO_MOVE
         for col in valid_cols:
             board.make_move(col, current_player_id)
             try:
@@ -177,17 +115,15 @@ class AdvancedNegamaxAI:
 
         valid_cols = board.get_valid_cols()
         if depth == 0 or not valid_cols:
-            if self.mode == "nnue":
-                return self.quiesce(board, alpha, beta, current_player_id, ply)
-            elif self.mode == "hybrid":
-                return self.quiesce(board, alpha, beta, current_player_id, ply)
-            else:
-                return self.quiesce(board, alpha, beta, current_player_id, ply)
+            return self.quiesce(board, alpha, beta, current_player_id, ply)
 
         tt_move = tt_entry[4] if tt_entry else None
+        
+        # ĐỒNG BỘ VỊ TRÍ 1: Sửa hàm gọi trong Negamax đệ quy về hệ 3 tham số phẳng
         ordered_moves = self.sorter.get_ordered_moves(
-            board, valid_cols, tt_move, ply, 
-            current_player_id=current_player_id, depth=depth
+            board, 
+            tt_move=tt_move, 
+            current_depth=depth
         )
 
         max_eval = float('-inf')
@@ -203,7 +139,6 @@ class AdvancedNegamaxAI:
                     if alpha < score < beta:
                         score = -self.negamax(board, depth - 1, -beta, -score, opp_id, ply + 1)
             finally:
-                # Dù ngắt đệ quy do Timeout, quân cờ vẫn bắt buộc phải được rút ra
                 board.undo_move(col, current_player_id)
 
             if score > max_eval:
@@ -261,7 +196,7 @@ class AdvancedNegamaxAI:
             
         return " -> ".join(map(str, pv))
 
-    def select_move(self, board: ConnectXBoard, max_depth=20, time_limit=1.8, last_move=None, verbose=True) -> int:
+    def select_move(self, board: ConnectXBoard, max_depth=20, time_limit=2.2, last_move=None, verbose=True) -> int:
         if self.sorter is None:
             self.sorter = MoveSorter(board.w)
 
@@ -271,10 +206,63 @@ class AdvancedNegamaxAI:
         if len(valid_cols) == 1:
             return valid_cols[0]
 
+        # 💥 SỬA ĐỔI CỐT LÕI: Thiết lập mốc thời gian NGAY LẬP TỨC để bảo vệ hàm check_signals
         self.start_time = time.perf_counter()
         self.time_limit = time_limit
         self.is_timeout = False
         self.node_count = 0
+
+        # 🎯 ĐOẠN LOGIC TRA CỨU KHAI CUỘC LAI ĐỆ QUY AN TOÀN TUYỆT ĐỐI:
+        if hasattr(self, 'native_book') and self.native_book.is_loaded:
+            current_state_score = self.native_book.get_score_from_book(board, self.player_id)
+            
+            if current_state_score is not None:
+                if verbose:
+                    print(f"📖 [OPENING BOOK] Phát hiện thế cờ trong sách. Điểm mục tiêu của Bot: {current_state_score}")
+                
+                move_scores = []
+                debug_info = {}
+                
+                # Bọc toàn bộ quá trình đệ quy phụ bằng try-except phòng ngừa cạn kiệt thời gian trên CPU yếu
+                try:
+                    for col in valid_cols:
+                        board.make_move(col, self.player_id)
+                        try:
+                            book_score = self.native_book.get_score_from_book(board, 1 - self.player_id)
+                            
+                            if book_score is not None:
+                                negamax_score = -book_score
+                                debug_info[col] = f"{negamax_score} (Trích xuất từ Sách)"
+                            else:
+                                # Tự tính toán đệ quy ngắn hạn
+                                raw_negamax = self.negamax(board, depth=4, alpha=float('-inf'), beta=float('inf'), current_player_id=1-self.player_id, ply=1)
+                                negamax_score = -raw_negamax
+                                debug_info[col] = f"{negamax_score} (CPU Negamax tự tính)"
+                            
+                            move_scores.append((negamax_score, col))
+                        finally:
+                            board.undo_move(col, self.player_id)
+                except SearchTimeoutException:
+                    if verbose:
+                        print("⚠️ [OPENING BOOK] Đệ quy phụ bị ngắt quãng do hết thời gian khống chế!")
+                
+                if verbose and debug_info:
+                    print("\n📊 [ANALYSIS] Kết quả phân tích tất cả các cột hợp lệ:")
+                    print("-" * 65)
+                    for c in sorted(valid_cols):
+                        print(f"   • Cột [{c}]: Điểm số = {debug_info.get(c, 'None (Chưa tính kịp)')}")
+                    print("-" * 65)
+                
+                if move_scores:
+                    move_scores.sort(key=lambda item: (item[0], -abs(item[1] - (board.w // 2))), reverse=True)
+                    best_score, best_col = move_scores[0]
+                    if verbose:
+                        print(f"📖 => Bot quyết định chọn cột tối ưu: [{best_col}] với điểm số: {best_score}\n")
+                    return best_col
+
+        # ──────────────────────────────────────────────────────────
+        # Đoạn code tính toán Heuristic Chuyên sâu phía dưới giữ nguyên bản cũ, 
+        # xóa bỏ các dòng gán trùng start_time, time_limit, node_count thừa đi:
         self.sorter.clear_history()
 
         overall_best_col = valid_cols[0]
@@ -299,8 +287,9 @@ class AdvancedNegamaxAI:
                 best_move_suggestion = tt_entry[4] if tt_entry else None
                 
                 ordered_cols = self.sorter.get_ordered_moves(
-                    board, valid_cols, best_move_suggestion, ply=1, 
-                    current_player_id=self.player_id, last_move=last_move, depth=current_depth
+                    board, 
+                    tt_move=best_move_suggestion, 
+                    current_depth=current_depth
                 )
 
                 while True:
@@ -321,7 +310,6 @@ class AdvancedNegamaxAI:
                                 if current_alpha < score < current_beta:
                                     score = -self.negamax(board, current_depth - 1, -current_beta, -score, 1 - self.player_id, ply=1)
                         finally:
-                            # Tầng root cũng phải có try...finally
                             board.undo_move(col, self.player_id)
                             
                         scores_cache[col] = score
@@ -362,7 +350,6 @@ class AdvancedNegamaxAI:
                     break
                     
         except SearchTimeoutException:
-            # Ngắt an toàn, bàn cờ lúc này ĐÃ ĐƯỢC DỌN SẠCH nhờ các khối finally
             pass
             
         if verbose and best_completed_depth_info is not None:
@@ -377,4 +364,3 @@ class AdvancedNegamaxAI:
             
         self.last_score = last_depth_score
         return overall_best_col
-        

@@ -11,20 +11,42 @@ from ai import AdvancedNegamaxAI
 # Trọng số vương quyền nền tảng dùng làm bệ phóng tiến hóa
 BASE_CHAMPION_WEIGHTS = {
     "WIN_BASE": 10000000,
-    "FORK_SCORE": 670015,
-    "THREAT_SCORE": 26162,
-    "MAX_STRATEGIC": 13589,
-    "C_SMOOTH": 1563.9577517039959,
-    "K_EDGE": 21.94907344971393,
-    "K_CORNER": 9.824837974267489,
-    "CNN_POWER": 2.2362842314664952,
-    "ALPHA_BALANCED": 0.7147987024389102,
-    "ALPHA_DEFENSIVE": 1.5516637596091083,
-    "ASPIRATION_DELTA": 2614.7390186268426,
-    "meta_target_board": "14x12",
+    "FORK_SCORE": 641839,
+    "THREAT_SCORE": 36499,
+    "MAX_STRATEGIC": 13607,
+    "C_SMOOTH": 1540.7259706098523,
+    "K_EDGE": 23.442601692030077,
+    "K_CORNER": 8.682558369484749,
+    "CNN_POWER": 2.2565585014055505,
+    "ALPHA_BALANCED": 0.6201356568933092,
+    "ALPHA_DEFENSIVE": 1.4055617960644347,
+    "ASPIRATION_DELTA": 3076.8027562957773,
+    "PARITY_ROW_BONUS": 141.43804191035696,
+    "PARITY_ROW_PENALTY": 162.6573907381674,
+    "meta_target_board": "7x6",
     "meta_target_x": 4,
-    "meta_trained_depth": 5
+    "meta_trained_depth": 20
 }
+
+def render_board(board: ConnectXBoard):
+    """Vẽ bàn cờ động trực quan phục vụ giám sát đấu trường Arena"""
+    print("\n" + "=" * 25)
+    for row in range(board.h - 1, -1, -1):
+        row_str = "| "
+        for col in range(board.w):
+            idx = col * board.col_height + row
+            mask = 1 << idx
+            if board.boards[0] & mask:
+                row_str += "X  "  # Quân của Champion (Player 0)
+            elif board.boards[1] & mask:
+                row_str += "O  "  # Quân của Challenger (Player 1)
+            else:
+                row_str += ".  "  
+        row_str += "|"
+        print(row_str)
+    print("-" * (board.w * 3 + 4))
+    print("  " + "  ".join(str(i) for i in range(board.w)))
+    print("=" * 25)
 
 def mutate_weights(base_weights, annealing_factor):
     """Đột biến có kiểm soát dựa trên hệ số hạ nhiệt giảm dần theo thế hệ"""
@@ -32,7 +54,8 @@ def mutate_weights(base_weights, annealing_factor):
     target_keys = [
         "FORK_SCORE", "THREAT_SCORE", "MAX_STRATEGIC", "C_SMOOTH", 
         "K_EDGE", "K_CORNER", "CNN_POWER", "ALPHA_BALANCED", 
-        "ALPHA_DEFENSIVE", "ASPIRATION_DELTA"
+        "ALPHA_DEFENSIVE", "ASPIRATION_DELTA",
+        "PARITY_ROW_BONUS", "PARITY_ROW_PENALTY"
     ]
     for key in target_keys:
         factor = random.uniform(1 - annealing_factor, 1 + annealing_factor)
@@ -112,7 +135,7 @@ def verify_against_human_lessons(weights, w, h, x):
     return True
 
 def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth, opening_moves=None) -> int:
-    """Đấu trường phân định Elo - Hỗ trợ nạp chuỗi khai cuộc ngẫu nhiên phá vỡ tính rập khuôn"""
+    """Đấu trường hiển thị trực quan trận đấu giữa Champion và Challenger"""
     board = ConnectXBoard(w, h, x)
     ai0 = AdvancedNegamaxAI(weights_p0, player_id=0, tt_exponent=23)
     ai1 = AdvancedNegamaxAI(weights_p1, player_id=1, tt_exponent=23)
@@ -121,25 +144,53 @@ def run_match_arena(w, h, x, weights_p0, weights_p1, max_depth, opening_moves=No
     ais = {0: ai0, 1: ai1}
     last_move = None
     
-    # Kích hoạt trận địa khai cuộc ngẫu nhiên được chỉ định từ vòng Tune chính
+    # In thông báo bắt đầu trận đấu thử nghiệm ElO
+    name_p0 = "🏆 CHAMPION (X)"
+    name_p1 = "⚡ CHALLENGER (O)"
+    print(f"\n⚔️  [ARENA] Trận đấu khởi tranh: {name_p0}  VS  {name_p1}")
+    
+    # Kích hoạt trận địa khai cuộc ngẫu nhiên
     if opening_moves:
+        print(f"📦 Chuỗi nước đi khai cuộc nền: {opening_moves}")
         for m in opening_moves:
             if m in board.get_valid_cols():
                 board.make_move(m, current_player)
                 last_move = m
                 current_player = 1 - current_player
 
+    # Vẽ trạng thái bàn cờ sau khai cuộc
+    render_board(board)
+    time.sleep(0.3) # Giãn cách để mắt người kịp theo dõi
+
+    move_count = len(opening_moves) if opening_moves else 0
     while board.get_valid_cols():
-        move = ais[current_player].select_move(board, max_depth=max_depth, time_limit=1.8, last_move=last_move, verbose=False)
+        move_count += 1
+        curr_name = name_p0 if current_player == 0 else name_p1
+        
+        # BẬT verbose=True ĐỂ HIỂN THỊ CẢ MA TRẬN PHÂN TÍCH ĐIỂM SỐ ĐANG DEBUG Chuẩn C++ CỦA BOT!
+        move = ais[current_player].select_move(board, max_depth=max_depth, time_limit=2.2, last_move=last_move, verbose=True)
+        
         if move == -1:
+            print(f"💀 {curr_name} không tìm thấy nước đi hợp lệ.")
             break
             
         board.make_move(move, current_player)
         last_move = move
+        
+        # In hành động hạ quân của từng Bot
+        print(f"🤖 [Nước {move_count:02d}] {curr_name} hạ quân vào cột [{move}]")
+        render_board(board)
+        
+        # Tốc độ hoạt cảnh (0.5 giây một nước, bạn có thể giảm xuống 0.1 nếu muốn xem Bot đánh siêu tốc)
+        time.sleep(0.5) 
+        
         if board.check_win(current_player):
+            print(f"🎉 Trận đấu kết thúc! {curr_name} CHIẾN THẮNG SÁT CỤC tuyệt đối!\n")
             return current_player
             
         current_player = 1 - current_player
+        
+    print("🤝 Trận đấu kết thúc với kết quả HÒA CĂNG THẲNG.\n")
     return -1
 
 def save_optimized_weights(champion_weights, w, h, x, search_depth, model_dir="../models", custom_filename=None):
@@ -211,27 +262,18 @@ def start_hardcore_training(generations, w, h, x, search_depth, cp_interval, mod
         
         # --- MA TRẬN ĐỐI KHÁNG ĐA DIỆN 4 TRẬN ĐỂ TRÁNH OVERFITTING ĐƯỜNG ĐI ---
         # Thế trận mẫu A: Sinh ngẫu nhiên 2 nước đi nền tại trục trung tâm
-        opening_A = [random.choice(center_cols), random.choice(center_cols)]
+        opening_A = []
         
         res1 = run_match_arena(w, h, x, champion, challenger, max_depth=search_depth, opening_moves=opening_A)
         if res1 == 0: champ_score += 1
         elif res1 == 1: chal_score += 1
         
-        res2 = run_match_arena(w, h, x, challenger, champion, max_depth=search_depth, opening_moves=opening_A)
-        if res2 == 0: chal_score += 1
-        elif res2 == 1: champ_score += 1
-
-        # Thế trận mẫu B: Sinh chuỗi khai cuộc mới độc lập hoàn toàn mẫu A
-        opening_B = [random.choice(center_cols), random.choice(center_cols)]
+        opening_B = []
         
         res3 = run_match_arena(w, h, x, champion, challenger, max_depth=search_depth, opening_moves=opening_B)
         if res3 == 0: champ_score += 1
         elif res3 == 1: chal_score += 1
         
-        res4 = run_match_arena(w, h, x, challenger, champion, max_depth=search_depth, opening_moves=opening_B)
-        if res4 == 0: chal_score += 1
-        elif res4 == 1: champ_score += 1
-
         # ĐIỀU KIỆN TIẾN HÓA GẮT GAO: Kẻ thách thức bắt buộc phải thắng tuyệt đối trên tổng thể đa trận địa
         if chal_score > champ_score:
             champion = challenger
@@ -255,9 +297,9 @@ if __name__ == "__main__":
     parser.add_argument("--w", type=int, default=7)
     parser.add_argument("--h", type=int, default=6)
     parser.add_argument("--x", type=int, default=4)
-    parser.add_argument("--depth", type=int, default=12)
-    parser.add_argument("--gen", type=int, default=100)
-    parser.add_argument("--cp", type=int, default=20)
+    parser.add_argument("--depth", type=int, default=20)
+    parser.add_argument("--gen", type=int, default=20)
+    parser.add_argument("--cp", type=int, default=5)
     
     args = parser.parse_args()
     start_hardcore_training(generations=args.gen, w=args.w, h=args.h, x=args.x, search_depth=args.depth, cp_interval=args.cp)

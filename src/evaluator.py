@@ -5,9 +5,9 @@ class BitboardCNNEvaluator:
     def __init__(self, config_weights):
         """
         Bộ lượng giá tối ưu hóa cấu trúc hình học Connect 4 (7x6):
+        - ĐÃ LOẠI BỎ TRỌNG SỐ TRUNG TÂM (CENTER SCORE) theo yêu cầu.
         - Bảo toàn tính nghiêm ngặt tuyệt đối của THREAT_SCORE và FORK_SCORE.
         - Tích hợp Radar Parity động quét theo từng hàng tranh chấp cụ thể.
-        - Tích hợp cơ chế Decay (phai nhạt) điểm kiểm soát trung tâm ở đầu game.
         """
         self.weights = config_weights
         self.is_initialized = False
@@ -27,27 +27,15 @@ class BitboardCNNEvaluator:
         self.alpha_defensive = self.weights["ALPHA_DEFENSIVE"]
         self.win_base = self.weights["WIN_BASE"]
 
-        # Cache các trọng số Parity và Trung tâm mở rộng mới
-        self.center_col_weight = self.weights.get("CENTER_COL_WEIGHT", 450.0)
+        # Cache các trọng số Parity
         self.parity_row_bonus = self.weights.get("PARITY_ROW_BONUS", 150.0)
         self.parity_row_penalty = self.weights.get("PARITY_ROW_PENALTY", 180.0)
 
     def _lazy_init(self, board: ConnectXBoard):
         """Khởi tạo một lần duy nhất các mặt nạ dịch bit cố định"""
         self.col_height = board.col_height
-        center_col = board.w // 2
-        
-        # Mặt nạ kiểm soát cột trung tâm (Cột 3)
-        self.center_mask = ((1 << board.h) - 1) << (center_col * self.col_height)
-        
-        # Mặt nạ các cột cánh liền kề trung tâm (Cột 2, 4)
-        self.flank_mask = 0
-        if center_col - 1 >= 0:
-            self.flank_mask |= ((1 << board.h) - 1) << ((center_col - 1) * self.col_height)
-        if center_col + 1 < board.w:
-            self.flank_mask |= ((1 << board.h) - 1) << ((center_col + 1) * self.col_height)
             
-        # Lưới quét chẵn lẻ tĩnh phục vụ đếm Threat đơn Playable ở Phase 4
+        # Lưới quét chẵn lẻ tĩnh phục vụ đếm Threat đơn Playable
         self.bottom_mask = 0
         self.even_rows_mask = 0
         self.odd_rows_mask = 0
@@ -61,7 +49,7 @@ class BitboardCNNEvaluator:
         self.is_initialized = True
 
     def _get_winning_spots(self, P: int, shifts: list, valid_mask: int, x: int) -> int:
-        """Ma thuật Bitwise quét điểm suýt thắng (Check tốt mọi kiểu cách ô, trống 1 hổng giữa)"""
+        """Ma thuật Bitwise quét điểm suýt thắng"""
         threats = 0
         if x == 4:
             for s in shifts:
@@ -105,7 +93,6 @@ class BitboardCNNEvaluator:
         my_threats_count = my_immediate_threats.bit_count()
         opp_threats_count = opp_immediate_threats.bit_count()
         
-        # Ngắt mạch khẩn cấp (Short-Circuit): Nếu dính đòn Fork, trả điểm cấu trúc cấp cao và thoát sớm
         if opp_threats_count >= 2: return -self.fork_score
         if my_threats_count >= 2: return self.fork_score
 
@@ -120,38 +107,20 @@ class BitboardCNNEvaluator:
             opp_row_count = (opp_board & row_mask).bit_count()
             total_row_pieces = my_row_count + opp_row_count
             
-            # Hệ số động: Hàng càng dày quân -> Tranh chấp càng cao -> Nhân mạnh điểm
             dynamic_multiplier = 1.0 + (total_row_pieces * 0.5)
             
-            if r % 2 == 1:  # Hàng Lẻ (Odd Row)
-                if my_id == 0:  # Bot đi trước (X) -> Muốn làm chủ hàng lẻ
+            if r % 2 == 1:  # Hàng Lẻ
+                if my_id == 0:
                     parity_positional_score += int(my_row_count * self.parity_row_bonus * dynamic_multiplier)
-                else:          # Bot đi sau (O) -> Phạt nếu để đối thủ chiếm nhiều hàng lẻ
+                else:
                     parity_positional_score -= int(opp_row_count * self.parity_row_penalty * dynamic_multiplier)
-            else:          # Hàng Chẵn (Even Row)
-                if my_id == 1:  # Bot đi sau (O) -> Muốn làm chủ hàng chẵn
+            else:          # Hàng Chẵn
+                if my_id == 1:
                     parity_positional_score += int(my_row_count * self.parity_row_bonus * dynamic_multiplier)
-                else:          # Bot đi trước (X) -> Phạt nếu để đối thủ chiếm nhiều hàng chẵn
+                else:
                     parity_positional_score -= int(opp_row_count * self.parity_row_penalty * dynamic_multiplier)
 
-        # --- PHASE 3: THƯỞNG ĐIỂM TRUNG TÂM TUYỆT ĐỐI (2 NƯỚC ĐẦU) & DECAY ĐỘNG (GIAI ĐOẠN SAU) ---
-        my_center_bits = (my_board & self.center_mask).bit_count()
-        opp_center_bits = (opp_board & self.center_mask).bit_count()
-        my_flank_bits = (my_board & self.flank_mask).bit_count()
-        opp_flank_bits = (opp_board & self.flank_mask).bit_count()
-
-        total_pieces = occupied.bit_count()
-        
-        if total_pieces <= 5:
-            opening_multiplier = 2.0
-        else:
-            opening_multiplier = max(0.15, 1.0 - (total_pieces - 5) * 0.05)
-
-
-        raw_center_score = (my_center_bits - opp_center_bits) * self.center_col_weight + (my_flank_bits - opp_flank_bits) * 50
-        center_score = int(raw_center_score * opening_multiplier)
-
-        # --- PHASE 4: FEATURE MAP CNN & ĐIỀU TỐC ĐE DỌA ĐƠN THREAT_SCORE ---
+        # --- PHASE 3: FEATURE MAP CNN & ĐIỀU TỐC ĐE DỌA ĐƠN THREAT_SCORE ---
         empty_mask = (~occupied) & board.valid_mask
         
         my_edges_mask = 0
@@ -188,7 +157,6 @@ class BitboardCNNEvaluator:
         alpha = self.alpha_balanced if total_my_cnn_score >= total_opp_cnn_score else self.alpha_defensive
         strategic_score = (self.max_strat * my_soft) - (self.max_strat * opp_soft * alpha)
         
-        # Lượng giá sát cục đơn THREAT_SCORE dựa trên tính chẵn lẻ của ô trống Playable
         my_parity_mask = self.even_rows_mask if my_id == 0 else self.odd_rows_mask
         opp_parity_mask = self.even_rows_mask if opp_id == 0 else self.odd_rows_mask
         
@@ -197,4 +165,4 @@ class BitboardCNNEvaluator:
         
         parity_threat_score = (my_parity_threats * self.threat_score) - (opp_parity_threats * self.threat_score_opp)
         
-        return int(strategic_score + parity_threat_score + center_score + parity_positional_score)
+        return int(strategic_score + parity_threat_score + parity_positional_score)

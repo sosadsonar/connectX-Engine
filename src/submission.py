@@ -1,4 +1,4 @@
-# %%writefile submission.py
+%%writefile submission.py
 import os
 import subprocess
 import ctypes
@@ -20,11 +20,13 @@ CHAMPION_WEIGHTS = {
 
 CPP_CODE = """
 #include <iostream>
+#include <fstream>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <random>
 #include <cstring>
+#include <cstdlib>
 
 extern "C" {
 
@@ -125,9 +127,101 @@ struct TTEntry {
     int8_t best_move;
 };
 
-// Khởi tạo bảng băm tĩnh 2^23 entries (~128MB RAM) vĩnh viễn trên hệ thống C++
 const int TT_SIZE = 1 << 23; 
 TTEntry tt[TT_SIZE]; 
+
+struct BookTable {
+    uint32_t size;
+    int key_bytes;
+    void* keys;
+    uint8_t* values;
+
+    BookTable() : size(0), key_bytes(0), keys(nullptr), values(nullptr) {}
+
+    ~BookTable() {
+        if (keys) free(keys);
+        if (values) free(values);
+    }
+
+    uint8_t get(uint64_t key) const {
+        if (size == 0) return 0;
+        uint32_t idx = key % size;
+        
+        // Quét tuyến tính (Linear Probing) chuẩn cấu trúc Pascal Pons Solver
+        if (key_bytes == 1) {
+            uint8_t* k_arr = (uint8_t*)keys;
+            uint8_t target = (uint8_t)key;
+            while (k_arr[idx] != 0) {
+                if (k_arr[idx] == target) return values[idx];
+                idx = (idx + 1) % size;
+            }
+        } else if (key_bytes == 2) {
+            uint16_t* k_arr = (uint16_t*)keys;
+            uint16_t target = (uint16_t)key;
+            while (k_arr[idx] != 0) {
+                if (k_arr[idx] == target) return values[idx];
+                idx = (idx + 1) % size;
+            }
+        } else if (key_bytes == 4) {
+            uint32_t* k_arr = (uint32_t*)keys;
+            uint32_t target = (uint32_t)key;
+            while (k_arr[idx] != 0) {
+                if (k_arr[idx] == target) return values[idx];
+                idx = (idx + 1) % size;
+            }
+        }
+        return 0; 
+    }
+};
+
+BookTable book_table;
+int book_depth = -1;
+
+bool is_prime(uint32_t n) {
+    if (n <= 1) return false;
+    if (n <= 3) return true;
+    if (n % 2 == 0 || n % 3 == 0) return false;
+    for (uint32_t i = 5; i * i <= n; i += 6) {
+        if (n % i == 0 || n % (i + 2) == 0) return false;
+    }
+    return true;
+}
+
+uint32_t next_prime(uint32_t n) {
+    while (!is_prime(n)) n++;
+    return n;
+}
+
+void load_opening_book(const char* filepath) {
+    std::ifstream ifs(filepath, std::ios::binary);
+    if (ifs.fail()) {
+        std::cerr << "Unable to load opening book: " << filepath << std::endl;
+        return;
+    }
+
+    char width, height, depth, partial_key_bytes, value_bytes, log_size;
+    ifs.read(&width, 1);
+    ifs.read(&height, 1);
+    ifs.read(&depth, 1);
+    ifs.read(&partial_key_bytes, 1);
+    ifs.read(&value_bytes, 1);
+    ifs.read(&log_size, 1);
+
+    uint32_t raw_size = 1 << (int)log_size;
+    uint32_t size = next_prime(raw_size);
+
+    book_table.size = size;
+    book_table.key_bytes = (int)partial_key_bytes;
+    book_table.keys = malloc(size * book_table.key_bytes);
+    book_table.values = (uint8_t*)malloc(size * 1);
+
+    ifs.read(reinterpret_cast<char*>(book_table.keys), size * book_table.key_bytes);
+    ifs.read(reinterpret_cast<char*>(book_table.values), size * 1);
+    
+    book_depth = (int)depth;
+    std::cerr << "Successfully loaded opening book. Max Depth: " << book_depth << std::endl;
+    ifs.close();
+}
 
 struct Evaluator {
     double win_base, fork_score, threat_score, max_strat;
@@ -503,6 +597,41 @@ int select_move_cpp(const int* kaggle_board, int my_mark, int max_depth, double 
     if (count == 0) return -1;
     if (count == 1) return cols[0];
 
+    if (book_depth != -1) {
+        int best_book_col = -1;
+        uint8_t min_opp_val = 255;
+
+        for (int i = 0; i < count; ++i) {
+            int col = cols[i];
+            
+            // Đi thử nước đi
+            board.make_move(col, 0, searcher.zobrist_table, searcher.zobrist_turn);
+            
+            // Tính toán khóa băm hoán vị key3 của Pons cho thế cờ sau nước đi
+            uint64_t next_pos = board.boards[1]; 
+            uint64_t next_mask = board.boards[0] | board.boards[1];
+            uint64_t key3 = next_pos + next_mask;
+            
+            // Tra cứu giá trị trong Opening Book
+            uint8_t val = book_table.get(key3);
+            
+            // Hoàn tác nước đi
+            board.undo_move(col, 0, searcher.zobrist_table, searcher.zobrist_turn);
+            
+            // Do đối thủ chuẩn bị đi, ta phải tìm nước đi để MINIMIZE điểm số của đối thủ
+            if (val > 0 && val < min_opp_val) {
+                min_opp_val = val;
+                best_book_col = col;
+            }
+        }
+        
+        // Nếu tìm thấy nước đi hoàn hảo trong sách giáo khoa, đi ngay lập tức!
+        if (best_book_col != -1) {
+            return best_book_col;
+        }
+    }
+
+    // Nếu không có sách giáo khoa (hoặc đã vượt quá Opening Book), gọi Negamax cực hạn
     int overall_best_col = cols[0];
     int last_depth_score = 0;
     int ASPIRATION_DELTA = 2908; 
@@ -600,13 +729,18 @@ def compile_and_load_cpp():
         cpp_filename, "-o", so_filename
     ]
     
-    subprocess.run(compile_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+    try:
+        subprocess.run(compile_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        raise RuntimeError(f"❌ [LỖI BIÊN DỊCH C++] Không thể build engine tối ưu: {e}")
 
     _lib = ctypes.CDLL(so_filename)
     
     _lib.init_cpp_engine.argtypes = [ctypes.POINTER(ctypes.c_double)]
     _lib.init_cpp_engine.restype = None
+
+    _lib.load_opening_book.argtypes = [ctypes.c_char_p]
+    _lib.load_opening_book.restype = None
 
     _lib.select_move_cpp.argtypes = [
         ctypes.POINTER(ctypes.c_int), # mảng bàn cờ phẳng
@@ -632,20 +766,36 @@ def compile_and_load_cpp():
     
     _lib.init_cpp_engine(weights_arr)
 
+    book_path = ""
+    # Quét thư mục làm việc hiện tại
+    for root, dirs, files in os.walk("."):
+        for file in files:
+            if file.endswith(".book"):
+                book_path = os.path.join(root, file)
+                break
+                
+    # Nếu không tìm thấy, quét thư mục đầu vào của Kaggle Dataset
+    if not book_path and os.path.exists("/kaggle/input"):
+        for root, dirs, files in os.walk("/kaggle/input"):
+            for file in files:
+                if file.endswith(".book"):
+                    book_path = os.path.join(root, file)
+                    break
+
+    _lib.load_opening_book(book_path.encode('utf-8'))
+
 def my_agent(observation, configuration):
-    """
-    Kaggle Entry Point:
-    - Ở lượt đầu tiên, compiler sẽ build mã nguồn C++ mất khoảng 1.2s (Vẫn dưới giới hạn 15s init của Kaggle).
-    - Các lượt sau, CPU sẽ tính toán với tốc độ 15.000.000+ NPS nhờ C++ Engine gốc.
-    """
     compile_and_load_cpp()
     
+    # 1. Chuyển đổi mảng bàn cờ phẳng của Kaggle sang kiểu ctypes int*
     board_len = len(observation.board)
     c_board = (ctypes.c_int * board_len)(*observation.board)
     
+    # 2. Cấu hình tìm kiếm cực hạn
     max_depth = 20
     time_limit = 2.2
     
+    # 3. Gọi Engine C++ giải toán
     best_move = _lib.select_move_cpp(
         c_board,
         ctypes.c_int(observation.mark),
